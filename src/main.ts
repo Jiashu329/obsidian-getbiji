@@ -12,18 +12,24 @@ export default class GetNotesPlugin extends Plugin {
 	async onload(): Promise<void> {
 		await this.loadSettings();
 
-		// 左侧功能区：一键触发同步（与命令面板行为一致）
-		// eslint-disable-next-line obsidianmd/ui/sentence-case
-		this.addRibbonIcon("download-cloud", "同步 Get 笔记", () => {
-			void this.syncFromRibbon();
+		// 左侧功能区：默认增量更新
+		this.addRibbonIcon("download-cloud", "同步 get 笔记 (增量更新)", () => {
+			void this.syncFromRibbon("incremental");
 		});
 
 		this.addCommand({
-			id: "pull-notes-from-api",
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
-			name: "同步 Get 笔记",
+			id: "pull-notes-incremental",
+			name: "同步 get 笔记 (增量更新)",
 			callback: () => {
-				void this.syncFromRibbon();
+				void this.syncFromRibbon("incremental");
+			},
+		});
+
+		this.addCommand({
+			id: "pull-notes-full",
+			name: "同步 get 笔记 (全量更新)",
+			callback: () => {
+				void this.syncFromRibbon("full");
 			},
 		});
 
@@ -31,9 +37,9 @@ export default class GetNotesPlugin extends Plugin {
 	}
 
 	/** 从侧边栏按钮或命令触发同步，并捕获未处理异常 */
-	private async syncFromRibbon(): Promise<void> {
+	private async syncFromRibbon(mode: "incremental" | "full"): Promise<void> {
 		try {
-			await runSync(this);
+			await runSync(this, mode);
 		} catch {
 			// runSync 内已 Notice；此处避免未捕获 Promise
 		}

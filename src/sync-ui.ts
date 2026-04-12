@@ -26,8 +26,7 @@ export class SyncProgressModal extends Modal {
 		const { contentEl } = this;
 		contentEl.empty();
 		contentEl.addClass("getbiji-sync-modal");
-		// eslint-disable-next-line obsidianmd/ui/sentence-case
-		contentEl.createEl("h2", { text: "同步 Get 笔记" });
+		contentEl.createEl("h2", { text: "同步 get 笔记" });
 		this.statusEl = contentEl.createDiv({ text: "准备中…" });
 		this.progressEl = contentEl.createEl("progress", { cls: "getbiji-progress" });
 		this.progressEl.max = 1;

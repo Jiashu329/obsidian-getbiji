@@ -1,4 +1,3 @@
-/* eslint-disable obsidianmd/ui/sentence-case */
 import { App, Plugin, PluginSettingTab, Setting } from "obsidian";
 import { VaultFolderPathSuggest } from "./vault-folder-suggest";
 
@@ -112,10 +111,10 @@ export class GetNotesSettingTab extends PluginSettingTab {
 		});
 
 		new Setting(container)
-			.setName("Client ID")
+			.setName("Client id")
 			 
 			.setDesc(
-				"可以在Get笔记开放平台-应用管理，新建应用（权限请给：读取笔记权限）后得到，应为：cli_XXX格式的ID串。",
+				"可以在 get 笔记开放平台-应用管理，新建应用（权限请给：读取笔记权限）后得到，应为：cli_XXX格式的 id 串。",
 			)
 			.addText((text) =>
 				text
@@ -133,7 +132,7 @@ export class GetNotesSettingTab extends PluginSettingTab {
 			.setName("API key")
 			 
 			.setDesc(
-				"可以在Get笔记开放平台-API key，创建API key后得到，应为：gk_XXX格式的ID串。",
+				"可以在 get 笔记开放平台-API key，创建 API key 后得到，应为：gk_XXX格式的 id 串。",
 			)
 			.addText((text) => {
 				 
@@ -167,29 +166,12 @@ export class GetNotesSettingTab extends PluginSettingTab {
 				});
 			});
 
-		new Setting(container)
-			.setName("同步方式")
-			 
-			.setDesc(
-				"全量更新：无论本地是否已有同一条 Get 笔记（get_note_id），都会拉取详情并覆盖写入。增量更新：若同步目录下已有相同 get_note_id 的 Markdown，则跳过该条（不消耗详情接口、不改文件）。列表每次均从云端从头分页拉取，不再使用本地游标。",
-			)
-			.addDropdown((dd) =>
-				dd
-					.addOption("full", "全量更新（覆盖）")
-					.addOption("incremental", "增量更新（跳过已有 ID）")
-					.setValue(this.plugin.settings.syncMode)
-					.onChange(async (value) => {
-						this.plugin.settings.syncMode = value as SyncMode;
-						await this.plugin.saveSettings();
-					}),
-			);
 	}
 
 	/** 页签「关于」：仅作者信息 */
 	private renderAboutTab(container: HTMLElement): void {
 		container.createEl("p", {
-			 
-			text: "Author：Jiashu",
+			text: "Author: Jiashu",
 			cls: "setting-item-description",
 		});
 	}

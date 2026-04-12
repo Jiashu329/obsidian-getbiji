@@ -34,8 +34,8 @@ export default tseslint.config(
 	{
 		files: ["src/**/*.ts"],
 		rules: {
-			// 用户界面为中文，关闭英文 sentence case 规则
-			"obsidianmd/ui/sentence-case": "off",
+			// 将官方首字母大写规则设为警告，以便在本地编辑器中出现波浪线提示
+			"obsidianmd/ui/sentence-case": "warn",
 		},
 	},
 );

@@ -48,27 +48,30 @@ function sanitizeFileName(name: string): string {
 
 /** YAML 列表项：必要时加引号，避免特殊字符破坏 frontmatter */
 function yamlListItem(s: string): string {
-	const safe = s.replace(/"/g, '\\"');
-	return `  - "${safe}"`;
+	return `  - ${JSON.stringify(s)}`;
 }
 
 /** YAML 双引号标量（frontmatter 内一行值） */
 function yamlQuotedScalar(s: string): string {
-	return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+	return JSON.stringify(s);
 }
 
 /** 附件里 type=link 时，用 API 的 title + url 拼成 Markdown 链接文案 `[title](url)` */
-function attachmentToMarkdownLink(a: { title?: string; url: string }): string {
-	const t = a.title ?? "";
+/** 附件里 type=link 时，用 API 的 title + url 拼成 Markdown 链接文案 `[title](url)` */
+function attachmentToMarkdownLink(a: { type?: string; title?: string; url: string }): string {
+	let t = (a.title ?? "").replace(/\r?\n|\r/g, " ").trim();
+	if (t.length === 0 && a.type?.toLowerCase() === "audio") {
+		t = "录音文件";
+	}
 	return t.length > 0 ? `[${t}](${a.url})` : `[](${a.url})`;
 }
 
 /**
- * 将**第一条** `type` 为 link 的附件写到 frontmatter 顶层 `Link: "[title](url)"`（选项 C）。
+ * 将**第一条** `type` 为 link 或 audio 的附件写到 frontmatter 顶层 `Link: "[title](url)"`。
  * 同一条不再写入 `get_note_attachments`，避免与顶层重复。
  */
 function linkAttachmentsToRootYaml(attachments: NonNullable<NoteDetail["attachments"]>): string[] {
-	const first = attachments.find((a) => a.type?.toLowerCase() === "link");
+	const first = attachments.find((a) => a.type?.toLowerCase() === "link" || a.type?.toLowerCase() === "audio");
 	if (!first) {
 		return [];
 	}
@@ -76,13 +79,13 @@ function linkAttachmentsToRootYaml(attachments: NonNullable<NoteDetail["attachme
 }
 
 /**
- * 将附件写入 `get_note_attachments`：仅包含**非 link** 类型。
- * 第一条 link 只写在顶层 `Link`；第 2 条及以后的 link 不写进文档属性，只在正文「关联链接」中展示。
+ * 将附件写入 `get_note_attachments`。
+ * 将用于顶层 Link 的首调 link/audio 剔除。剩余的 attachment 中，剔除所有的 link，保留其他类型。
  */
 function attachmentsToYamlBlock(attachments: NonNullable<NoteDetail["attachments"]>): string[] {
-	const firstLinkIdx = attachments.findIndex((a) => a.type?.toLowerCase() === "link");
+	const firstTargetIdx = attachments.findIndex((a) => a.type?.toLowerCase() === "link" || a.type?.toLowerCase() === "audio");
 	const rest =
-		firstLinkIdx >= 0 ? attachments.filter((_, i) => i !== firstLinkIdx) : [...attachments];
+		firstTargetIdx >= 0 ? attachments.filter((_, i) => i !== firstTargetIdx) : [...attachments];
 	const nonLinkOnly = rest.filter((a) => a.type?.toLowerCase() !== "link");
 	if (nonLinkOnly.length === 0) {
 		return [];
@@ -118,11 +121,47 @@ export interface NoteMarkdownOptions {
 }
 
 /**
+ * 按照 Obsidian 规范清理标签：
+ * - 允许：字母（包括所有语言）、数字、_、-、/
+ * - 替换空格为 `-`
+ * - 去除不支持的标点符号
+ * - 若最终全部是数字，补充前缀 `tag-`
+ */
+function sanitizeObsidianTag(tagRaw: string): string {
+	let s = tagRaw.trim();
+	if (!s) return "";
+	
+	// 1. 特殊符号可读性容错转移
+	s = s.replace(/C\+\+/ig, "Cpp");
+	s = s.replace(/\+/g, "plus");
+	s = s.replace(/&/g, "and");
+	
+	// 2. 空格一律变横线
+	s = s.replace(/\s+/g, "-");
+	
+	// 3. 剥离所有 Obsidian 不支持的字符 (利用 Unicode 属性 \p{L} \p{N})
+	s = s.replace(/[^\p{L}\p{N}_-/]/gu, "");
+	
+	// 4. 收尾清理首尾无效横线或斜杠
+	s = s.replace(/^[-/]+|[-/]+$/g, "");
+	
+	// 5. Obsidian 规定标签不能全是数字
+	if (/^[0-9]+$/.test(s)) {
+		s = `tag-${s}`;
+	}
+	return s;
+}
+
+/**
  * 将一条 Get 笔记详情转为 Markdown 文本（含 YAML frontmatter）。
  * 若传入 idToBasename + folder，会把正文 / 引用里指向 biji 的笔记 URL 转为 `[[同步目录/标题]]`。
  */
 export function noteDetailToMarkdown(note: NoteDetail, opt?: NoteMarkdownOptions): string {
-	const tagNames = (note.tags ?? []).map((t) => t.name).filter(Boolean);
+	const tagNames = (note.tags ?? [])
+		.map((t) => t.name)
+		.filter((t): t is string => typeof t === "string")
+		.map(sanitizeObsidianTag)
+		.filter(Boolean);
 	const tagsBlock =
 		tagNames.length > 0 ? ["tags:", ...tagNames.map(yamlListItem)] : ["tags: []"];
 	const linkRoot =
@@ -132,8 +171,8 @@ export function noteDetailToMarkdown(note: NoteDetail, opt?: NoteMarkdownOptions
 	const idForYaml = opt?.canonicalIdStr ?? String(note.id);
 	const fm = [
 		"---",
-		`get_note_id: ${idForYaml}`,
-		`title: "${(note.title ?? "").replace(/"/g, '\\"')}"`,
+		`get_note_id: "${idForYaml}"`,
+		`title: ${JSON.stringify(note.title ?? "")}`,
 		`note_type: ${note.note_type ?? ""}`,
 		`source: ${note.source ?? ""}`,
 		`updated_at: ${note.updated_at ?? ""}`,
@@ -688,13 +727,12 @@ async function collectAllListPages(
 /**
  * 执行一次同步：先拉完整列表并显示进度，再逐条写入，全程在弹窗中展示进度。
  */
-export async function runSync(plugin: GetNotesPluginLike): Promise<void> {
+export async function runSync(plugin: GetNotesPluginLike, overrideMode?: "incremental" | "full"): Promise<void> {
 	const { clientId, apiKey, folderPath, authUseRawKey, requestGapMs, syncMode } = plugin.settings;
 	const gapMs = Number.isFinite(requestGapMs) ? Math.min(5000, Math.max(0, requestGapMs)) : 600;
-	const mode = syncMode === "incremental" ? "incremental" : "full";
+	const mode = overrideMode ?? (syncMode === "incremental" ? "incremental" : "full");
 	if (!clientId.trim() || !apiKey.trim()) {
-		// eslint-disable-next-line obsidianmd/ui/sentence-case
-		new Notice("请先在设置中填写 Client ID 与 API key。");
+		new Notice("请先在设置中填写 client id 与 API key。");
 		return;
 	}
 
@@ -747,6 +785,8 @@ export async function runSync(plugin: GetNotesPluginLike): Promise<void> {
 
 		let imported = 0;
 		let skipped = 0;
+		const writtenTitles: string[] = [];
+		const skippedTitles: string[] = [];
 		for (let i = 0; i < items.length; i++) {
 			if (modal.cancelled) {
 				modal.setDone(`已取消。已写入 ${imported} 条，已跳过 ${skipped} 条。`);
@@ -762,14 +802,17 @@ export async function runSync(plugin: GetNotesPluginLike): Promise<void> {
 				continue;
 			}
 
+			const titleStr = item.title?.trim() || "未命名";
+
 			if (mode === "incremental" && localIds !== null && localIds.has(noteIdStr)) {
 				skipped += 1;
-				modal.setItemProgress(i + 1, items.length, `${item.title ?? ""}（已跳过：本地已有同 ID）`);
+				skippedTitles.push(titleStr);
+				modal.setItemProgress(i + 1, items.length, `[已存在跳过] ${titleStr}`);
 				await modal.flush();
 				continue;
 			}
 
-			modal.setItemProgress(i + 1, items.length, item.title ?? "");
+			modal.setItemProgress(i + 1, items.length, `[获取并写入] ${titleStr}`);
 			await modal.flush();
 
 			const detail = await fetchDetailOrFallback(client, noteIdStr, item);
@@ -787,10 +830,36 @@ export async function runSync(plugin: GetNotesPluginLike): Promise<void> {
 				await plugin.app.vault.create(path, markdown);
 			}
 			imported += 1;
+			writtenTitles.push(titleStr);
 
 			if (gapMs > 0) {
 				await sleep(gapMs);
 			}
+		}
+
+		try {
+			const nowStr = new Date().toLocaleString();
+			const reportLines = [
+				`# GetBiji 同步报告`,
+				`时间：${nowStr}`,
+				`模式：${mode === "incremental" ? "增量" : "全量"}`,
+				``,
+				`## 本次更新写入 (${imported} 条)`,
+				...(writtenTitles.length > 0 ? writtenTitles.map((t) => `- ${t}`) : ["无"]),
+				``,
+				`## 本次跳过 (${skipped} 条)`,
+				...(skippedTitles.length > 0 ? skippedTitles.map((t) => `- ${t}`) : ["无"]),
+				``,
+			];
+			const reportPath = "GetBiji 同步报告.md";
+			const reportFile = plugin.app.vault.getAbstractFileByPath(reportPath);
+			if (reportFile instanceof TFile) {
+				await plugin.app.vault.modify(reportFile, reportLines.join("\n"));
+			} else {
+				await plugin.app.vault.create(reportPath, reportLines.join("\n"));
+			}
+		} catch (reportErr) {
+			console.error("[getbiji] 写入同步报告失败", reportErr);
 		}
 
 		const doneDetail =
