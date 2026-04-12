@@ -45,7 +45,8 @@ export interface NoteListItem {
 export interface ListNotesData {
 	notes: NoteListItem[];
 	has_more: boolean;
-	next_cursor?: number;
+	/** 下一页游标（部分环境下可能是字符串数字，需在同步逻辑中统一解析） */
+	next_cursor?: number | string;
 	total: number;
 }
 
@@ -66,13 +67,46 @@ interface ApiEnvelope<T> {
 }
 
 /**
- * 从列表项解析稳定数字 ID（兼容 `id` 与 `note_id` 两种字段名）。
+ * 解析为无损十进制字符串（用于列表游标、超大 snowflake ID）；JSON number 若已超过安全整数则无法还原，返回 undefined。
+ */
+export function resolveListNoteIdString(item: NoteListItem): string | undefined {
+	const ext = item as NoteListItem & { noteId?: unknown; resource_id?: unknown };
+	const candidates = [ext.noteId, item.note_id, ext.resource_id, item.id];
+	
+	for (const raw of candidates) {
+		if (raw === undefined || raw === null) continue;
+		if (typeof raw === "bigint") return raw.toString();
+		if (typeof raw === "string") {
+			const t = raw.trim();
+			if (!/^\d+$/.test(t)) continue;
+			try {
+				return BigInt(t).toString();
+			} catch {
+				continue;
+			}
+		}
+		if (typeof raw === "number" && Number.isFinite(raw)) {
+			if (Number.isSafeInteger(raw)) return String(raw);
+			// 如果是不安全的整数（精度丢失），忽略它并尝试下一个候选字段
+		}
+	}
+	return undefined;
+}
+
+/**
+ * 仅当 ID 可安全放入 JS number 时返回（否则请用 resolveListNoteIdString + 字符串 API）。
  */
 export function resolveListNoteId(item: NoteListItem): number | undefined {
-	const raw = item.id ?? item.note_id;
-	if (raw === undefined || raw === null) return undefined;
-	const n = typeof raw === "string" ? Number.parseInt(raw, 10) : Number(raw);
-	return Number.isFinite(n) ? n : undefined;
+	const s = resolveListNoteIdString(item);
+	if (s === undefined) return undefined;
+	try {
+		const b = BigInt(s);
+		const n = Number(b);
+		if (!Number.isSafeInteger(n) || BigInt(n) !== b) return undefined;
+		return n;
+	} catch {
+		return undefined;
+	}
 }
 
 /**
@@ -146,13 +180,13 @@ export class GetNoteApiClient {
 		throw new Error("请求多次仍返回 429，请稍后再试或降低同步频率。");
 	}
 
-	/** 分页列举笔记，`since_id` 为游标（首次可用 0） */
-	async listNotes(sinceId: number): Promise<ListNotesData> {
+	/** 分页列举笔记，`since_id` 为游标（首次可用 0 或 "0"，大 ID 务必用字符串） */
+	async listNotes(sinceId: number | string): Promise<ListNotesData> {
 		return this.getJson<ListNotesData>("/resource/note/list", { since_id: sinceId });
 	}
 
-	/** 拉取单条笔记详情（正文更完整）；查询参数使用字符串 ID 避免大数精度问题 */
-	async getNote(noteId: number): Promise<NoteDetail> {
+	/** 拉取单条笔记详情（正文更完整）；参数用字符串避免大数精度问题 */
+	async getNote(noteId: number | string): Promise<NoteDetail> {
 		const data = await this.getJson<{ note: NoteDetail }>("/resource/note/detail", {
 			id: String(noteId),
 		});

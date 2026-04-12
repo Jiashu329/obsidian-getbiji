@@ -13,12 +13,14 @@ export default class GetNotesPlugin extends Plugin {
 		await this.loadSettings();
 
 		// 左侧功能区：一键触发同步（与命令面板行为一致）
+		// eslint-disable-next-line obsidianmd/ui/sentence-case
 		this.addRibbonIcon("download-cloud", "同步 Get 笔记", () => {
 			void this.syncFromRibbon();
 		});
 
 		this.addCommand({
 			id: "pull-notes-from-api",
+			// eslint-disable-next-line obsidianmd/ui/sentence-case
 			name: "同步 Get 笔记",
 			callback: () => {
 				void this.syncFromRibbon();
@@ -38,7 +40,12 @@ export default class GetNotesPlugin extends Plugin {
 	}
 
 	async loadSettings(): Promise<void> {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, (await this.loadData()) as Partial<GetNotesSettings>);
+		const merged = Object.assign({}, DEFAULT_SETTINGS, (await this.loadData()) as Partial<GetNotesSettings>);
+		// 兼容旧版 data：无 syncMode 时用默认全量
+		if (merged.syncMode !== "full" && merged.syncMode !== "incremental") {
+			merged.syncMode = DEFAULT_SETTINGS.syncMode;
+		}
+		this.settings = merged;
 	}
 
 	async saveSettings(): Promise<void> {

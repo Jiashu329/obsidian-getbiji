@@ -1,11 +1,41 @@
-import { normalizePath, Notice, TFile } from "obsidian";
-import { GetNoteApiClient, resolveListNoteId, type NoteDetail, type NoteListItem } from "./get-api";
+import { App, normalizePath, Notice, TFile } from "obsidian";
+import {
+	GetNoteApiClient,
+	resolveListNoteIdString,
+	type NoteDetail,
+	type NoteListItem,
+} from "./get-api";
 import type { GetNotesPluginLike } from "./context";
 import { SyncProgressModal } from "./sync-ui";
 
 /** 同步过程中在两次网络请求之间暂停，减轻 429 */
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+/**
+ * 扫描同步目录下 Markdown，收集 YAML 中的 get_note_id（字符串，兼容大整数）。
+ */
+function collectLocalGetNoteIds(app: App, folderRaw: string): Set<string> {
+	const folderNorm = normalizePath(folderRaw.trim() || "GetBiji");
+	const prefix = `${folderNorm}/`;
+	const ids = new Set<string>();
+	for (const f of app.vault.getMarkdownFiles()) {
+		const p = normalizePath(f.path);
+		if (!p.startsWith(prefix)) continue;
+		const fm = app.metadataCache.getFileCache(f)?.frontmatter;
+		if (fm == null) continue;
+		const raw = fm["get_note_id"] as unknown;
+		let digitStr: string | undefined;
+		if (typeof raw === "string") {
+			const t = raw.trim();
+			if (/^\d+$/.test(t)) digitStr = BigInt(t).toString();
+		} else if (typeof raw === "number" && Number.isFinite(raw) && Number.isSafeInteger(raw)) {
+			digitStr = BigInt(Math.trunc(raw)).toString();
+		}
+		if (digitStr !== undefined) ids.add(digitStr);
+	}
+	return ids;
 }
 
 /**
@@ -81,8 +111,10 @@ function attachmentsToYamlBlock(attachments: NonNullable<NoteDetail["attachments
 
 /** 同步为 Markdown 时的可选参数：用于把 Get 内链转成 Obsidian 双链 */
 export interface NoteMarkdownOptions {
-	idToBasename?: Map<number, string>;
+	idToBasename?: Map<string, string>;
 	folder?: string;
+	/** 写入 YAML 的 get_note_id（大整数用此避免 JSON number 丢精度） */
+	canonicalIdStr?: string;
 }
 
 /**
@@ -97,9 +129,10 @@ export function noteDetailToMarkdown(note: NoteDetail, opt?: NoteMarkdownOptions
 		note.attachments && note.attachments.length > 0 ? linkAttachmentsToRootYaml(note.attachments) : [];
 	const attBlock =
 		note.attachments && note.attachments.length > 0 ? attachmentsToYamlBlock(note.attachments) : [];
+	const idForYaml = opt?.canonicalIdStr ?? String(note.id);
 	const fm = [
 		"---",
-		`get_note_id: ${note.id}`,
+		`get_note_id: ${idForYaml}`,
 		`title: "${(note.title ?? "").replace(/"/g, '\\"')}"`,
 		`note_type: ${note.note_type ?? ""}`,
 		`source: ${note.source ?? ""}`,
@@ -265,11 +298,11 @@ async function ensureFolder(vault: GetNotesPluginLike["app"]["vault"], folderPat
 /**
  * 为每条笔记生成「仅标题」的唯一文件名（不含数字 ID）；重名时加 _2、_3。
  */
-function buildIdToUniqueBasename(items: NoteListItem[]): Map<number, string> {
-	const result = new Map<number, string>();
+function buildIdToUniqueBasename(items: NoteListItem[]): Map<string, string> {
+	const result = new Map<string, string>();
 	const countByBase = new Map<string, number>();
 	for (const item of items) {
-		const id = resolveListNoteId(item);
+		const id = resolveListNoteIdString(item);
 		if (id === undefined) continue;
 		const raw = sanitizeFileName(item.title || "未命名");
 		const n = countByBase.get(raw) ?? 0;
@@ -286,9 +319,9 @@ function notePathFromBasename(folder: string, basename: string): string {
 }
 
 /**
- * 从 Get / biji 的 URL 中尽量解析出笔记数字 ID（用于转成 Vault 内双链）。
+ * 从 Get / biji 的 URL 中解析笔记 ID 十进制字符串（支持超长 snowflake）。
  */
-function extractNoteIdFromBijiUrl(url: string): number | undefined {
+function extractNoteIdFromBijiUrl(url: string): string | undefined {
 	const patterns: RegExp[] = [
 		/[?&#]note[_-]?id=(\d+)/i,
 		/[?&#]noteId=(\d+)/i,
@@ -299,9 +332,13 @@ function extractNoteIdFromBijiUrl(url: string): number | undefined {
 	];
 	for (const re of patterns) {
 		const m = re.exec(url);
-		if (m?.[1]) {
-			const n = Number.parseInt(m[1], 10);
-			if (Number.isFinite(n)) return n;
+		const digits = m?.[1];
+		if (digits && /^\d+$/.test(digits)) {
+			try {
+				return BigInt(digits).toString();
+			} catch {
+				return undefined;
+			}
 		}
 	}
 	return undefined;
@@ -312,14 +349,14 @@ function extractNoteIdFromBijiUrl(url: string): number | undefined {
  */
 function rewriteBijiNoteLinksToWiki(
 	text: string,
-	idToBasename: Map<number, string>,
+	idToBasename: Map<string, string>,
 	folder: string,
 ): string {
 	if (!text.trim()) return text;
 	const folderSeg = folder.replace(/^\/+|\/+$/g, "");
 
-	const toWiki = (id: number): string | null => {
-		const base = idToBasename.get(id);
+	const toWiki = (idStr: string): string | null => {
+		const base = idToBasename.get(idStr);
 		if (!base) return null;
 		const inner = normalizePath(`${folderSeg}/${base}`);
 		return `[[${inner}]]`;
@@ -331,9 +368,9 @@ function rewriteBijiNoteLinksToWiki(
 	out = out.replace(
 		/<a[^>\s]*\s+href=["'](https?:\/\/[^"']*biji\.com[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi,
 		(_full, url: string, innerHtml: string) => {
-			const id = extractNoteIdFromBijiUrl(url.replace(/&amp;/g, "&"));
-			if (id === undefined) return _full;
-			const w = toWiki(id);
+			const idStr = extractNoteIdFromBijiUrl(url.replace(/&amp;/g, "&"));
+			if (idStr === undefined) return _full;
+			const w = toWiki(idStr);
 			if (!w) return _full;
 			const inner = w.slice(2, -2);
 			const label = innerHtml.replace(/<[^>]+>/g, "").trim();
@@ -345,9 +382,9 @@ function rewriteBijiNoteLinksToWiki(
 	out = out.replace(
 		/\[([^\]]*)\]\((https?:\/\/[^)\s]+biji\.com[^)\s]*)\)/gi,
 		(_full, label: string, url: string) => {
-			const id = extractNoteIdFromBijiUrl(url.replace(/&amp;/g, "&"));
-			if (id === undefined) return _full;
-			const w = toWiki(id);
+			const idStr = extractNoteIdFromBijiUrl(url.replace(/&amp;/g, "&"));
+			if (idStr === undefined) return _full;
+			const w = toWiki(idStr);
 			if (!w) return _full;
 			const inner = w.slice(2, -2);
 			return label ? `[[${inner}|${label}]]` : `[[${inner}]]`;
@@ -357,9 +394,9 @@ function rewriteBijiNoteLinksToWiki(
 	// 裸露的 biji 笔记 URL → 双链（避免已替换的 [[ 内再匹配）
 	out = out.replace(/https?:\/\/[^\s"'<>)\]]+biji\.com[^\s"'<>)\]]+/gi, (url) => {
 		if (url.includes("]]")) return url;
-		const id = extractNoteIdFromBijiUrl(url.replace(/&amp;/g, "&"));
-		if (id === undefined) return url;
-		const w = toWiki(id);
+		const idStr = extractNoteIdFromBijiUrl(url.replace(/&amp;/g, "&"));
+		if (idStr === undefined) return url;
+		const w = toWiki(idStr);
 		return w ?? url;
 	});
 
@@ -384,16 +421,24 @@ function isRateLimitedMessage(message: string): boolean {
  */
 async function fetchDetailOrFallback(
 	client: GetNoteApiClient,
-	noteId: number,
+	noteIdStr: string,
 	item: NoteListItem,
 ): Promise<NoteDetail> {
 	try {
-		return await client.getNote(noteId);
+		return await client.getNote(noteIdStr);
 	} catch (e: unknown) {
 		const msg = e instanceof Error ? e.message : String(e);
 		if (isNoteMissingDetailError(msg) || isRateLimitedMessage(msg)) {
 			console.warn("[getbiji] 详情不可用，已用列表数据代替：", msg);
-			return { ...item, id: noteId } as NoteDetail;
+			let idNum = 0;
+			try {
+				const b = BigInt(noteIdStr);
+				const n = Number(b);
+				if (Number.isSafeInteger(n) && BigInt(n) === b) idNum = n;
+			} catch {
+				idNum = 0;
+			}
+			return { ...item, id: idNum } as NoteDetail;
 		}
 		throw e;
 	}
@@ -401,50 +446,240 @@ async function fetchDetailOrFallback(
 
 const MAX_LIST_PAGES = 5000;
 
+/** 列表分页无法继续（BigInt 回退仍无效时） */
+class ListCursorStuckError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "ListCursorStuckError";
+	}
+}
+
 /**
- * 分页拉取当前游标之后的全部列表项（与原先「边拉边写」的列表阶段等价）。
+ * 将接口返回的 next_cursor 规范为十进制字符串（不信任已损的 JSON number）。
+ */
+function parseCursorDecimalString(raw: unknown): string | undefined {
+	if (raw === null || raw === undefined) return undefined;
+	if (typeof raw === "bigint") return raw.toString();
+	if (typeof raw === "string") {
+		const t = raw.trim();
+		if (!/^\d+$/.test(t)) return undefined;
+		try {
+			return BigInt(t).toString();
+		} catch {
+			return undefined;
+		}
+	}
+	if (typeof raw === "number" && Number.isFinite(raw)) {
+		if (!Number.isSafeInteger(raw)) return undefined;
+		return String(raw);
+	}
+	return undefined;
+}
+
+/** 本批列表项中的最大笔记 ID（字符串，BigInt 比较） */
+function maxIdStringFromNotes(notes: NoteListItem[]): string | undefined {
+	let max: bigint | null = null;
+	for (const n of notes) {
+		const s = resolveListNoteIdString(n);
+		if (s === undefined) continue;
+		try {
+			const b = BigInt(s);
+			if (max === null || b > max) max = b;
+		} catch {
+			continue;
+		}
+	}
+	return max === null ? undefined : max.toString();
+}
+
+/**
+ * 接口未给 next_cursor 时的下一 since 候选：与 getnote-mcp 文档一致，优先「本页最后一条」的 ID，否则用本批最大 ID。
+ */
+function nextSinceCandidateWithoutCursor(notes: NoteListItem[], sinceAtRequest: string): string {
+	const last = notes.length > 0 ? resolveListNoteIdString(notes[notes.length - 1]!) : undefined;
+	const maxB = maxIdStringFromNotes(notes) ?? sinceAtRequest;
+	return last ?? maxB;
+}
+
+function normalizeStartSinceString(startSince: number | string): string {
+	if (typeof startSince === "string") {
+		const t = startSince.trim();
+		if (/^\d+$/.test(t)) {
+			try {
+				return BigInt(t).toString();
+			} catch {
+				return "0";
+			}
+		}
+		return "0";
+	}
+	if (typeof startSince === "number" && Number.isFinite(startSince) && Number.isSafeInteger(Math.trunc(startSince))) {
+		return String(Math.trunc(startSince));
+	}
+	return "0";
+}
+
+/** 本批列表项中的最小笔记 ID（用于与「ID 递减 / 末条为游标」类接口对齐） */
+function minIdStringFromNotes(notes: NoteListItem[]): string | undefined {
+	let min: bigint | null = null;
+	for (const n of notes) {
+		const s = resolveListNoteIdString(n);
+		if (s === undefined) continue;
+		try {
+			const b = BigInt(s);
+			if (min === null || b < min) min = b;
+		} catch {
+			continue;
+		}
+	}
+	return min === null ? undefined : min.toString();
+}
+
+/**
+ * 分页拉取列表；游标与 ID 一律按十进制字符串 + BigInt 演算，避免超大 snowflake 在 JS 里 since+1 === since。
+ * 若接口在 has_more 下重复返回同 ID，会按笔记 ID 去重，并在 total 已收齐时提前结束，避免「只有二十多条却翻几十页」。
  */
 async function collectAllListPages(
 	client: GetNoteApiClient,
-	startSince: number,
+	startSince: number | string,
 	gapMs: number,
 	isCancelled: () => boolean,
-	onPage: (pageIndex: number, lastBatch: number, total: number) => void | Promise<void>,
-): Promise<{ items: NoteListItem[]; endSince: number; cancelled: boolean }> {
+	onPage: (batchIndex: number, lastBatch: number, total: number) => void | Promise<void>,
+): Promise<{ items: NoteListItem[]; endSince: string; cancelled: boolean }> {
 	const items: NoteListItem[] = [];
-	let since = startSince;
-	let pageIndex = 0;
+	const seenNoteIds = new Set<string>();
+	let serverTotal: number | undefined;
+	let sinceStr = normalizeStartSinceString(startSince);
+	let batchIndex = 0;
+	let duplicateOnlyStreak = 0;
 
 	for (let guard = 0; guard < MAX_LIST_PAGES; guard++) {
 		if (isCancelled()) {
-			return { items, endSince: since, cancelled: true };
+			return { items, endSince: sinceStr, cancelled: true };
 		}
 
-		const list = await client.listNotes(since);
+		const sinceAtRequest = sinceStr;
+		const list = await client.listNotes(sinceStr);
 		await sleep(Math.min(300, gapMs));
 		const notes = list.notes ?? [];
 
+		if (typeof list.total === "number" && Number.isFinite(list.total) && list.total >= 0) {
+			if (serverTotal === undefined || list.total > serverTotal) {
+				serverTotal = list.total;
+			}
+		}
+
+		const finishIfQuotaMet = (): boolean =>
+			serverTotal !== undefined && serverTotal > 0 && seenNoteIds.size >= serverTotal;
+
 		if (notes.length === 0) {
 			if (!list.has_more) {
-				return { items, endSince: since, cancelled: false };
+				return { items, endSince: sinceStr, cancelled: false };
 			}
-			since = typeof list.next_cursor === "number" ? list.next_cursor : since;
+			if (finishIfQuotaMet()) {
+				return { items, endSince: sinceStr, cancelled: false };
+			}
+			const nextS = parseCursorDecimalString(list.next_cursor);
+			let newS = nextS ?? sinceStr;
+			if (newS === sinceAtRequest) {
+				newS = (BigInt(sinceAtRequest) + BigInt(1)).toString();
+				console.debug("[getbiji] 列表空批仍 has_more，游标完全停滞，强制 since+1 续页", {
+					sinceAtRequest,
+					nextS,
+					newS,
+				});
+			}
+			sinceStr = newS;
 			continue;
 		}
 
-		pageIndex += 1;
-		items.push(...notes);
-		await onPage(pageIndex, notes.length, items.length);
+		let added = 0;
+		for (const n of notes) {
+			const id = resolveListNoteIdString(n);
+			if (id !== undefined && seenNoteIds.has(id)) {
+				continue;
+			}
+			if (id !== undefined) {
+				seenNoteIds.add(id);
+			}
+			items.push(n);
+			added += 1;
+		}
 
-		const idNums = notes.map((n) => resolveListNoteId(n)).filter((x): x is number => x !== undefined);
-		const maxFromBatch = idNums.length > 0 ? Math.max(...idNums) : since;
+		if (added === 0 && notes.length > 0) {
+			duplicateOnlyStreak += 1;
+			if (duplicateOnlyStreak > 25) {
+				console.warn(
+					"[getbiji] 已连续多批仅重复笔记，停止列表拉取（避免无限翻页）。若笔记未收齐请联系 Get 开放平台核对列表分页。",
+					{ uniqueCount: seenNoteIds.size, duplicateOnlyStreak },
+				);
+				return { items, endSince: sinceStr, cancelled: false };
+			}
+			const minB = minIdStringFromNotes(notes);
+			if (minB !== undefined && BigInt(minB) < BigInt(sinceAtRequest) && BigInt(minB) > BigInt(0)) {
+				let tryNext = BigInt(minB) - BigInt(1);
+				if (tryNext < BigInt(0)) tryNext = BigInt(0);
+				sinceStr = tryNext.toString();
+				console.debug("[getbiji] 本批数据均为重复，尝试按照递减趋势向下推进 since", { sinceAtRequest, minB, sinceStr });
+			} else {
+				sinceStr = (BigInt(sinceAtRequest) + BigInt(1)).toString();
+				console.debug("[getbiji] 本批笔记均已出现过，已跳过并入并向上推进 since+1", {
+					sinceAtRequest,
+					dupStreak: duplicateOnlyStreak,
+				});
+			}
+			continue;
+		}
+		duplicateOnlyStreak = 0;
+
+		batchIndex += 1;
+		await onPage(batchIndex, added, items.length);
+
+		if (finishIfQuotaMet()) {
+			return { items, endSince: sinceStr, cancelled: false };
+		}
+
+		const maxBatch = maxIdStringFromNotes(notes) ?? sinceAtRequest;
+		const minBatch = minIdStringFromNotes(notes) ?? sinceAtRequest;
+		const nextS = parseCursorDecimalString(list.next_cursor);
 
 		if (!list.has_more) {
-			const endSince = typeof list.next_cursor === "number" ? list.next_cursor : maxFromBatch;
+			const endSince = nextS ?? maxBatch;
 			return { items, endSince, cancelled: false };
 		}
 
-		since = typeof list.next_cursor === "number" ? list.next_cursor : maxFromBatch;
+		let newSinceStr =
+			nextS !== undefined ? nextS : nextSinceCandidateWithoutCursor(notes, sinceAtRequest);
+
+		if (newSinceStr === sinceAtRequest) {
+			const tryMin = minBatch !== maxBatch ? minBatch : undefined;
+			const hi =
+				BigInt(maxBatch) > BigInt(sinceAtRequest) ? BigInt(maxBatch) : BigInt(sinceAtRequest);
+			const bumpMax = (hi + BigInt(1)).toString();
+			if (
+				tryMin !== undefined &&
+				BigInt(tryMin) < BigInt(sinceAtRequest) &&
+				BigInt(tryMin) > BigInt(0)
+			) {
+				newSinceStr = tryMin;
+				console.debug(
+					"[getbiji] 列表续页卡住：采用本批最小 ID 作为下一 since 脱困（适配「ID 递减」类分页）",
+					{ sinceAtRequest, minBatch, maxBatch, newSinceStr },
+				);
+			} else {
+				newSinceStr = bumpMax;
+				console.debug("[getbiji] 列表续页卡住：已用 max(since,本批最大ID)+1 作为下一 since 脱困", {
+					sinceAtRequest,
+					nextS,
+					maxBatch,
+					newSinceStr,
+				});
+			}
+			if (newSinceStr === sinceAtRequest) {
+				throw new ListCursorStuckError("列表游标彻底未前进且脱困失败，无法继续分页。");
+			}
+		}
+		sinceStr = newSinceStr;
 	}
 
 	throw new Error("列表分页超过安全上限，请向官方反馈或缩小同步范围。");
@@ -454,10 +689,12 @@ async function collectAllListPages(
  * 执行一次同步：先拉完整列表并显示进度，再逐条写入，全程在弹窗中展示进度。
  */
 export async function runSync(plugin: GetNotesPluginLike): Promise<void> {
-	const { clientId, apiKey, folderPath, authUseRawKey, requestGapMs } = plugin.settings;
+	const { clientId, apiKey, folderPath, authUseRawKey, requestGapMs, syncMode } = plugin.settings;
 	const gapMs = Number.isFinite(requestGapMs) ? Math.min(5000, Math.max(0, requestGapMs)) : 600;
+	const mode = syncMode === "incremental" ? "incremental" : "full";
 	if (!clientId.trim() || !apiKey.trim()) {
-		new Notice("请先在设置中填写 Client ID 与 API Key。");
+		// eslint-disable-next-line obsidianmd/ui/sentence-case
+		new Notice("请先在设置中填写 Client ID 与 API key。");
 		return;
 	}
 
@@ -465,72 +702,84 @@ export async function runSync(plugin: GetNotesPluginLike): Promise<void> {
 	await ensureFolder(plugin.app.vault, folder);
 
 	const client = new GetNoteApiClient(apiKey.trim(), clientId.trim(), authUseRawKey);
-	const since = plugin.settings.sinceId;
 
 	const modal = new SyncProgressModal(plugin.app);
 	modal.open();
 	await modal.flush();
 
 	try {
+		// 不再使用本地 sinceId 游标：列表始终从 since_id=0 分页拉全量目录
 		const collected = await collectAllListPages(
 			client,
-			since,
+			0,
 			gapMs,
 			() => modal.cancelled,
-			async (pageIndex, lastBatch, total) => {
-				modal.setListFetching(pageIndex, lastBatch, total);
+			async (batchIndex, lastBatch, total) => {
+				modal.setListFetching(batchIndex, lastBatch, total);
 				await modal.flush();
 			},
 		);
 
 		if (collected.cancelled) {
-			modal.setDone("已取消（未更新列表游标）。");
+			modal.setDone("已取消。");
 			await modal.flush();
 			new Notice("已取消同步。");
 			return;
 		}
 
-		const { items, endSince } = collected;
+		const { items } = collected;
 
 		if (items.length === 0) {
-			modal.setDone("没有可同步的笔记（列表为空）。可将游标重置为 0 后重试。");
+			modal.setDone("没有可同步的笔记（列表为空）。");
 			await modal.flush();
-			new Notice(
-				"当前没有可同步的笔记（列表为空）。若你确认云端有笔记，请在设置中将「列表游标」重置为 0 后重试。",
-				10000,
-			);
+			new Notice("当前没有可同步的笔记。若云端确有内容，可稍后再试。", 10000);
 			return;
 		}
 
 		modal.startItemPhase(items.length);
 		await modal.flush();
 
+		// 增量：根据同步目录内已有 get_note_id 决定是否跳过（不拉详情）
+		const localIds = mode === "incremental" ? collectLocalGetNoteIds(plugin.app, folder) : null;
+
 		// 整批笔记的 id→文件名（纯标题），供路径命名与正文内 biji 链接改写为 Obsidian 双链
 		const idToBasename = buildIdToUniqueBasename(items);
 
 		let imported = 0;
+		let skipped = 0;
 		for (let i = 0; i < items.length; i++) {
 			if (modal.cancelled) {
-				modal.setDone(`已取消。已完成 ${imported} / ${items.length} 条（未更新列表游标）。`);
+				modal.setDone(`已取消。已写入 ${imported} 条，已跳过 ${skipped} 条。`);
 				await modal.flush();
-				new Notice(`已取消同步，已处理 ${imported} 条。`);
+				new Notice(`已取消同步，已写入 ${imported} 条。`);
 				return;
 			}
 
 			const item = items[i]!;
-			const noteId = resolveListNoteId(item);
-			if (noteId === undefined) {
-				console.warn("[getbiji] 列表项缺少 id 字段，已跳过", item);
+			const noteIdStr = resolveListNoteIdString(item);
+			if (noteIdStr === undefined) {
+				console.warn("[getbiji] 列表项缺少可解析的 id 字段，已跳过", item);
+				continue;
+			}
+
+			if (mode === "incremental" && localIds !== null && localIds.has(noteIdStr)) {
+				skipped += 1;
+				modal.setItemProgress(i + 1, items.length, `${item.title ?? ""}（已跳过：本地已有同 ID）`);
+				await modal.flush();
 				continue;
 			}
 
 			modal.setItemProgress(i + 1, items.length, item.title ?? "");
 			await modal.flush();
 
-			const detail = await fetchDetailOrFallback(client, noteId, item);
-			const basename = idToBasename.get(noteId) ?? sanitizeFileName(item.title || "未命名");
+			const detail = await fetchDetailOrFallback(client, noteIdStr, item);
+			const basename = idToBasename.get(noteIdStr) ?? sanitizeFileName(item.title || "未命名");
 			const path = notePathFromBasename(folder, basename);
-			const markdown = noteDetailToMarkdown(detail, { idToBasename, folder });
+			const markdown = noteDetailToMarkdown(detail, {
+				idToBasename,
+				folder,
+				canonicalIdStr: noteIdStr,
+			});
 			const existing = plugin.app.vault.getAbstractFileByPath(path);
 			if (existing instanceof TFile) {
 				await plugin.app.vault.modify(existing, markdown);
@@ -544,13 +793,16 @@ export async function runSync(plugin: GetNotesPluginLike): Promise<void> {
 			}
 		}
 
-		plugin.settings.sinceId = typeof endSince === "number" ? endSince : since;
-		await plugin.saveSettings();
-
-		modal.setDone(`完成：已写入或更新 ${imported} 条。`);
+		const doneDetail =
+			skipped > 0 ? `完成：已写入或更新 ${imported} 条，已跳过 ${skipped} 条（本地已有同 ID）。` : `完成：已写入或更新 ${imported} 条。`;
+		modal.setDone(doneDetail);
 		await modal.flush();
 		await sleep(600);
-		new Notice(`同步完成：已写入或更新 ${imported} 条笔记。`);
+		const noticeMsg =
+			skipped > 0
+				? `同步完成：已写入或更新 ${imported} 条，已跳过 ${skipped} 条。`
+				: `同步完成：已写入或更新 ${imported} 条笔记。`;
+		new Notice(noticeMsg);
 	} catch (e: unknown) {
 		const msg = e instanceof Error ? e.message : String(e);
 		console.error("[getbiji]", e);

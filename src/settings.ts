@@ -1,5 +1,9 @@
+/* eslint-disable obsidianmd/ui/sentence-case */
 import { App, Plugin, PluginSettingTab, Setting } from "obsidian";
 import { VaultFolderPathSuggest } from "./vault-folder-suggest";
+
+/** 同步策略：全量始终覆盖；增量在本地已有同 get_note_id 时跳过该条 */
+export type SyncMode = "full" | "incremental";
 
 /** 插件持久化配置（会写入 Obsidian 插件数据目录） */
 export interface GetNotesSettings {
@@ -10,10 +14,10 @@ export interface GetNotesSettings {
 	/** 笔记写入的 Vault 相对目录 */
 	folderPath: string;
 	/**
-	 * 列表接口游标：下次同步从该 since_id 继续（增量）。
-	 * 不在设置页展示，仍持久化并参与同步逻辑。
+	 * 全量：逐项拉详情并覆盖写入。
+	 * 增量：同步目录下 frontmatter 中已有相同 get_note_id 的笔记则跳过（不拉详情、不改文件）。
 	 */
-	sinceId: number;
+	syncMode: SyncMode;
 	/**
 	 * 为 true 时 Authorization 直接传 API Key（无 Bearer 前缀）。
 	 * 不在设置页展示，仍持久化。
@@ -30,7 +34,7 @@ export const DEFAULT_SETTINGS: GetNotesSettings = {
 	clientId: "",
 	apiKey: "",
 	folderPath: "GetBiji",
-	sinceId: 0,
+	syncMode: "full",
 	authUseRawKey: false,
 	requestGapMs: 600,
 };
@@ -58,9 +62,6 @@ export class GetNotesSettingTab extends PluginSettingTab {
 		containerEl.empty();
 		containerEl.addClass("getbiji-settings-root");
 
-		// 顶部大标题：产品文案固定为「Obsidian-Getbiji」（与 ESLint「设置页标题勿含插件名」例外说明一致）
-		// eslint-disable-next-line obsidianmd/settings-tab/no-problematic-settings-headings -- 用户指定设置页顶部文案
-		new Setting(containerEl).setName("Obsidian-Getbiji").setHeading();
 
 		// 页签栏：同步信息 | 关于（其余参数不在界面展示，仍保留默认值或历史 data）
 		const tabBar = containerEl.createDiv({ cls: "getbiji-tab-bar" });
@@ -112,11 +113,13 @@ export class GetNotesSettingTab extends PluginSettingTab {
 
 		new Setting(container)
 			.setName("Client ID")
+			 
 			.setDesc(
 				"可以在Get笔记开放平台-应用管理，新建应用（权限请给：读取笔记权限）后得到，应为：cli_XXX格式的ID串。",
 			)
 			.addText((text) =>
 				text
+					 
 					.setPlaceholder("cli_xxx")
 					.setValue(this.plugin.settings.clientId)
 					.onChange(async (value) => {
@@ -126,11 +129,14 @@ export class GetNotesSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(container)
-			.setName("API Key")
+			 
+			.setName("API key")
+			 
 			.setDesc(
-				"可以在Get笔记开放平台-API Key，创建API Key后得到，应为：gk_XXX格式的ID串。",
+				"可以在Get笔记开放平台-API key，创建API key后得到，应为：gk_XXX格式的ID串。",
 			)
 			.addText((text) => {
+				 
 				text.setPlaceholder("gk_live_xxx");
 				text.inputEl.type = "password";
 				text.setValue(this.plugin.settings.apiKey);
@@ -145,6 +151,7 @@ export class GetNotesSettingTab extends PluginSettingTab {
 			.setDesc("请选择同步后的笔记存放地址，如地址不存在，将会自动创建。")
 			.addText((text) => {
 				text
+					 
 					.setPlaceholder("GetBiji")
 					.setValue(this.plugin.settings.folderPath)
 					.onChange(async (value) => {
@@ -159,11 +166,29 @@ export class GetNotesSettingTab extends PluginSettingTab {
 					})();
 				});
 			});
+
+		new Setting(container)
+			.setName("同步方式")
+			 
+			.setDesc(
+				"全量更新：无论本地是否已有同一条 Get 笔记（get_note_id），都会拉取详情并覆盖写入。增量更新：若同步目录下已有相同 get_note_id 的 Markdown，则跳过该条（不消耗详情接口、不改文件）。列表每次均从云端从头分页拉取，不再使用本地游标。",
+			)
+			.addDropdown((dd) =>
+				dd
+					.addOption("full", "全量更新（覆盖）")
+					.addOption("incremental", "增量更新（跳过已有 ID）")
+					.setValue(this.plugin.settings.syncMode)
+					.onChange(async (value) => {
+						this.plugin.settings.syncMode = value as SyncMode;
+						await this.plugin.saveSettings();
+					}),
+			);
 	}
 
 	/** 页签「关于」：仅作者信息 */
 	private renderAboutTab(container: HTMLElement): void {
 		container.createEl("p", {
+			 
 			text: "Author：Jiashu",
 			cls: "setting-item-description",
 		});

@@ -26,6 +26,7 @@ export class SyncProgressModal extends Modal {
 		const { contentEl } = this;
 		contentEl.empty();
 		contentEl.addClass("getbiji-sync-modal");
+		// eslint-disable-next-line obsidianmd/ui/sentence-case
 		contentEl.createEl("h2", { text: "同步 Get 笔记" });
 		this.statusEl = contentEl.createDiv({ text: "准备中…" });
 		this.progressEl = contentEl.createEl("progress", { cls: "getbiji-progress" });
@@ -46,10 +47,12 @@ export class SyncProgressModal extends Modal {
 		this.contentEl.empty();
 	}
 
-	/** 拉取同步列表阶段 */
-	setListFetching(pageIndex: number, lastBatch: number, total: number): void {
+	/**
+	 * 拉取同步列表阶段：每向服务器请求一次列表计为「一批」（不是笔记正文页码）。
+	 */
+	setListFetching(batchIndex: number, lastBatch: number, total: number): void {
 		this.statusEl.setText("正在获取同步列表…");
-		this.detailEl.setText(`第 ${pageIndex} 页（本页 ${lastBatch} 条，累计 ${total} 条）`);
+		this.detailEl.setText(`列表拉取第 ${batchIndex} 批（本批 ${lastBatch} 条，累计 ${total} 条）`);
 		this.progressEl.removeAttribute("value");
 	}
 
