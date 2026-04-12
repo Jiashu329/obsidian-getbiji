@@ -140,7 +140,7 @@ function sanitizeObsidianTag(tagRaw: string): string {
 	s = s.replace(/\s+/g, "-");
 	
 	// 3. 剥离所有 Obsidian 不支持的字符 (利用 Unicode 属性 \p{L} \p{N})
-	s = s.replace(/[^\p{L}\p{N}_-/]/gu, "");
+	s = s.replace(/[^\p{L}\p{N}_/-]/gu, "");
 	
 	// 4. 收尾清理首尾无效横线或斜杠
 	s = s.replace(/^[-/]+|[-/]+$/g, "");
