@@ -1,0 +1,9 @@
+{
+	"id": "get-notes-sync",
+	"name": "Get Notes Sync",
+	"version": "1.0.0",
+	"minAppVersion": "0.15.0",
+	"description": "将 Get 笔记通过开放平台 API 同步到当前 Obsidian 仓库。",
+	"author": "",
+	"isDesktopOnly": false
+}
