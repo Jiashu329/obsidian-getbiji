@@ -3,7 +3,7 @@
 	"name": "GetBiji",
 	"version": "1.0.0",
 	"minAppVersion": "1.4.10",
-	"description": "通过 Get 笔记开放平台 API，将笔记同步到当前 Obsidian 仓库。",
+	"description": "Sync Get notes to your vault using the biji.com Open API.",
 	"author": "Jiashu",
 	"isDesktopOnly": false
 }
