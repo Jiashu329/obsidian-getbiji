@@ -1,4 +1,5 @@
 import { App, Plugin, PluginSettingTab, Setting } from "obsidian";
+import { VaultFolderPathSuggest } from "./vault-folder-suggest";
 
 /** 插件持久化配置（会写入 Obsidian 插件数据目录） */
 export interface GetNotesSettings {
@@ -10,16 +11,28 @@ export interface GetNotesSettings {
 	folderPath: string;
 	/**
 	 * 列表接口游标：下次同步从该 since_id 继续（增量）。
-	 * 设为 0 表示从头拉取。
+	 * 不在设置页展示，仍持久化并参与同步逻辑。
 	 */
 	sinceId: number;
+	/**
+	 * 为 true 时 Authorization 直接传 API Key（无 Bearer 前缀）。
+	 * 不在设置页展示，仍持久化。
+	 */
+	authUseRawKey: boolean;
+	/**
+	 * 每条笔记处理完后暂停的毫秒数（0～5000）。
+	 * 不在设置页展示，仍持久化。
+	 */
+	requestGapMs: number;
 }
 
 export const DEFAULT_SETTINGS: GetNotesSettings = {
 	clientId: "",
 	apiKey: "",
-	folderPath: "Get-notes",
+	folderPath: "GetBiji",
 	sinceId: 0,
+	authUseRawKey: false,
+	requestGapMs: 600,
 };
 
 /** 设置页所需插件类型（避免 settings ↔ main 循环引用） */
@@ -28,8 +41,12 @@ export type GetNotesPluginBridge = Plugin & {
 	saveSettings(): Promise<void>;
 };
 
+/** 设置页当前选中的页签（仅 UI，不写进 data.json） */
+type SettingsTabId = "sync" | "about";
+
 export class GetNotesSettingTab extends PluginSettingTab {
 	plugin: GetNotesPluginBridge;
+	private activeTab: SettingsTabId = "sync";
 
 	constructor(app: App, plugin: GetNotesPluginBridge) {
 		super(app, plugin);
@@ -39,17 +56,65 @@ export class GetNotesSettingTab extends PluginSettingTab {
 	display(): void {
 		const { containerEl } = this;
 		containerEl.empty();
+		containerEl.addClass("getbiji-settings-root");
 
-		new Setting(containerEl).setName("Connection").setHeading();
+		// 顶部大标题：产品文案固定为「Obsidian-Getbiji」（与 ESLint「设置页标题勿含插件名」例外说明一致）
+		// eslint-disable-next-line obsidianmd/settings-tab/no-problematic-settings-headings -- 用户指定设置页顶部文案
+		new Setting(containerEl).setName("Obsidian-Getbiji").setHeading();
 
-		containerEl.createEl("p", {
-			text: "Create an app at https://www.biji.com/openapi to get a Client ID and API key. Credentials stay on this device only.",
-			cls: "setting-item-description",
+		// 页签栏：同步信息 | 关于（其余参数不在界面展示，仍保留默认值或历史 data）
+		const tabBar = containerEl.createDiv({ cls: "getbiji-tab-bar" });
+		this.renderTabButton(tabBar, "sync", "同步信息");
+		this.renderTabButton(tabBar, "about", "关于");
+
+		const panelHost = containerEl.createDiv({ cls: "getbiji-tab-panel-host" });
+		if (this.activeTab === "sync") {
+			this.renderSyncInfoTab(panelHost);
+		} else {
+			this.renderAboutTab(panelHost);
+		}
+	}
+
+	/** 渲染单个页签按钮 */
+	private renderTabButton(parent: HTMLElement, id: SettingsTabId, label: string): void {
+		const btn = parent.createEl("button", {
+			type: "button",
+			text: label,
+			cls: "getbiji-tab-btn",
+		});
+		if (this.activeTab === id) {
+			btn.addClass("getbiji-tab-btn-active");
+		}
+		btn.addEventListener("click", () => {
+			this.activeTab = id;
+			this.display();
+		});
+	}
+
+	/** 页签「同步信息」：顶部说明 + Client ID、API Key、同步目录 */
+	private renderSyncInfoTab(container: HTMLElement): void {
+		// 开放平台说明（原「关于」中的同步说明，现置于本页签表单上方）
+		const intro = container.createEl("p", {
+			cls: "getbiji-sync-intro setting-item-description",
+		});
+		intro.createSpan({
+			text: "Getbiji通过Get笔记官方开放平台API同步到Obsidian中，您可以在",
+		});
+		const openApiLink = intro.createEl("a", {
+			href: "https://www.biji.com/openapi",
+			text: "Get笔记开放平台",
+		});
+		openApiLink.setAttr("target", "_blank");
+		openApiLink.setAttr("rel", "noopener");
+		intro.createSpan({
+			text: "中获取Client ID和API Key。所有密钥均存本地。",
 		});
 
-		new Setting(containerEl)
+		new Setting(container)
 			.setName("Client ID")
-			.setDesc("Open platform client ID (X-Client-ID header).")
+			.setDesc(
+				"可以在Get笔记开放平台-应用管理，新建应用（权限请给：读取笔记权限）后得到，应为：cli_XXX格式的ID串。",
+			)
 			.addText((text) =>
 				text
 					.setPlaceholder("cli_xxx")
@@ -60,9 +125,11 @@ export class GetNotesSettingTab extends PluginSettingTab {
 					}),
 			);
 
-		new Setting(containerEl)
-			.setName("API key")
-			.setDesc("Open platform API key (Authorization: Bearer …).")
+		new Setting(container)
+			.setName("API Key")
+			.setDesc(
+				"可以在Get笔记开放平台-API Key，创建API Key后得到，应为：gk_XXX格式的ID串。",
+			)
 			.addText((text) => {
 				text.setPlaceholder("gk_live_xxx");
 				text.inputEl.type = "password";
@@ -73,44 +140,32 @@ export class GetNotesSettingTab extends PluginSettingTab {
 				});
 			});
 
-		new Setting(containerEl)
-			.setName("Sync folder")
-			.setDesc("Path inside the vault; folders are created if missing.")
-			.addText((text) =>
+		new Setting(container)
+			.setName("同步目录")
+			.setDesc("请选择同步后的笔记存放地址，如地址不存在，将会自动创建。")
+			.addText((text) => {
 				text
-					.setPlaceholder("Get-notes")
+					.setPlaceholder("GetBiji")
 					.setValue(this.plugin.settings.folderPath)
 					.onChange(async (value) => {
-						this.plugin.settings.folderPath = value.trim() || "Get-notes";
+						this.plugin.settings.folderPath = value.trim() || "GetBiji";
 						await this.plugin.saveSettings();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName("List cursor (since_id)")
-			.setDesc(
-				"Used for incremental sync; you rarely need to edit this. Use “reset cursor” below to run a full sync from the beginning.",
-			)
-			.addText((text) =>
-				text
-					.setPlaceholder("0")
-					.setValue(String(this.plugin.settings.sinceId))
-					.onChange(async (value) => {
-						const n = Number.parseInt(value.trim(), 10);
-						this.plugin.settings.sinceId = Number.isFinite(n) && n >= 0 ? n : 0;
+					});
+				// 路径自动补全：点选后由 suggest 延迟 setValue，此处只写配置，勿再 text.setValue（避免重复触发 input）
+				new VaultFolderPathSuggest(this.app, text.inputEl, (picked) => {
+					void (async () => {
+						this.plugin.settings.folderPath = picked.trim() || "GetBiji";
 						await this.plugin.saveSettings();
-					}),
-			);
+					})();
+				});
+			});
+	}
 
-		new Setting(containerEl)
-			.setName("Reset cursor (full sync next)")
-			.setDesc("Sets since_id to 0. The next sync starts from the beginning (slower; may overwrite files).")
-			.addButton((btn) =>
-				btn.setButtonText("Reset to 0").onClick(async () => {
-					this.plugin.settings.sinceId = 0;
-					await this.plugin.saveSettings();
-					this.display();
-				}),
-			);
+	/** 页签「关于」：仅作者信息 */
+	private renderAboutTab(container: HTMLElement): void {
+		container.createEl("p", {
+			text: "Author：Jiashu",
+			cls: "setting-item-description",
+		});
 	}
 }

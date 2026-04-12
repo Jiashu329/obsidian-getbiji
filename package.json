@@ -1,7 +1,7 @@
 {
-	"name": "obsidian-get-notes-sync",
+	"name": "obsidian-getbiji",
 	"version": "1.0.0",
-	"description": "Sync Get笔记 (biji.com) into Obsidian via Open API",
+	"description": "将 Get 笔记（biji.com）通过 Open API 同步到 Obsidian",
 	"main": "main.js",
 	"type": "module",
 	"scripts": {
@@ -13,10 +13,10 @@
 	"keywords": [
 		"obsidian",
 		"obsidian-plugin",
-		"get-notes",
+		"getbiji",
 		"biji"
 	],
-	"license": "0-BSD",
+	"license": "GPL-3.0",
 	"devDependencies": {
 		"@types/node": "^16.11.6",
 		"esbuild": "0.25.5",

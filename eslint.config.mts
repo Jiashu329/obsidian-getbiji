@@ -34,20 +34,8 @@ export default tseslint.config(
 	{
 		files: ["src/**/*.ts"],
 		rules: {
-			"obsidianmd/ui/sentence-case": [
-				"error",
-				{
-					brands: ["Get", "biji"],
-					ignoreRegex: [
-						"cli_.*",
-						"gk_.*",
-						"since_id",
-						"since_ID",
-						"X-Client-ID",
-						"Authorization: Bearer",
-					],
-				},
-			],
+			// 用户界面为中文，关闭英文 sentence case 规则
+			"obsidianmd/ui/sentence-case": "off",
 		},
 	},
 );

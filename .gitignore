@@ -1,22 +1,46 @@
-# vscode
-.vscode 
-
-# Intellij
+# 编辑器与 IDE
+.vscode/
+.idea/
 *.iml
-.idea
+.cursor/
 
-# npm
-node_modules
+# 操作系统
+.DS_Store
+Thumbs.db
 
-# Don't include the compiled main.js file in the repo.
-# They should be uploaded to GitHub releases instead.
+# npm / Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+package-lock.json.bak
+
+# 构建产物（发布时随 GitHub Release 提供，一般不入库）
 main.js
+*.js.map
 
-# Exclude sourcemaps
-*.map
+# TypeScript
+*.tsbuildinfo
 
-# obsidian
+# ESLint
+.eslintcache
+
+# 测试与覆盖率（若日后添加）
+coverage/
+.nyc_output/
+
+# 环境变量与密钥（勿提交）
+.env
+.env.*
+!.env.example
+
+# Obsidian 插件本地数据（测试库或误拷入仓库根目录时）
 data.json
 
-# Exclude macOS Finder (System Explorer) View States
-.DS_Store
+# 临时与备份文件
+*.tmp
+*.temp
+*~
+*.swp
+*.swo

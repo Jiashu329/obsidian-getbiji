@@ -12,13 +12,14 @@ export default class GetNotesPlugin extends Plugin {
 	async onload(): Promise<void> {
 		await this.loadSettings();
 
-		this.addRibbonIcon("download-cloud", "Sync notes from Get", () => {
+		// 左侧功能区：一键触发同步（与命令面板行为一致）
+		this.addRibbonIcon("download-cloud", "同步 Get 笔记", () => {
 			void this.syncFromRibbon();
 		});
 
 		this.addCommand({
-			id: "sync-get-notes",
-			name: "Sync notes from Get",
+			id: "pull-notes-from-api",
+			name: "同步 Get 笔记",
 			callback: () => {
 				void this.syncFromRibbon();
 			},

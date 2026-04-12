@@ -1,8 +1,44 @@
-/*
+.getbiji-sync-modal .getbiji-progress {
+	width: 100%;
+}
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+.getbiji-sync-modal .getbiji-detail {
+	margin-top: 8px;
+	word-break: break-word;
+}
 
-If your plugin does not need CSS, delete this file.
+.getbiji-sync-modal .getbiji-btn-row {
+	margin-top: 12px;
+}
 
-*/
+/* 设置页：页签栏 */
+.getbiji-settings-root .getbiji-tab-bar {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin: 0.75em 0 1em;
+}
+
+.getbiji-settings-root .getbiji-tab-btn {
+	padding: 6px 14px;
+	border-radius: 6px;
+	border: 1px solid var(--background-modifier-border);
+	background: var(--background-secondary);
+	cursor: pointer;
+	font-size: var(--font-ui-small);
+}
+
+.getbiji-settings-root .getbiji-tab-btn-active {
+	background: var(--background-modifier-hover);
+	border-color: var(--interactive-accent);
+	font-weight: 600;
+}
+
+.getbiji-settings-root .getbiji-tab-panel-host {
+	margin-top: 0.25em;
+}
+
+/* 同步信息页签：顶部说明与下方表单项的间距 */
+.getbiji-settings-root .getbiji-sync-intro {
+	margin-bottom: 1em;
+}
