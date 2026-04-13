@@ -111,15 +111,14 @@ export class GetNotesSettingTab extends PluginSettingTab {
 		});
 
 		new Setting(container)
-			.setName("Client id")
+			.setName("Client ID")
 			 
 			.setDesc(
-				"可以在 get 笔记开放平台-应用管理，新建应用（权限请给：读取笔记权限）后得到，应为：cli_XXX格式的 id 串。",
+				"请在 get 笔记开放平台获取相关配置。",
 			)
 			.addText((text) =>
 				text
-					 
-					.setPlaceholder("cli_xxx")
+					.setPlaceholder("请输入 ID")
 					.setValue(this.plugin.settings.clientId)
 					.onChange(async (value) => {
 						this.plugin.settings.clientId = value;
@@ -132,11 +131,10 @@ export class GetNotesSettingTab extends PluginSettingTab {
 			.setName("API key")
 			 
 			.setDesc(
-				"可以在 get 笔记开放平台-API key，创建 API key 后得到，应为：gk_XXX格式的 id 串。",
+				"请在 get 笔记开放平台获取相关配置。",
 			)
 			.addText((text) => {
-				 
-				text.setPlaceholder("gk_live_xxx");
+				text.setPlaceholder("Gk");
 				text.inputEl.type = "password";
 				text.setValue(this.plugin.settings.apiKey);
 				text.onChange(async (value) => {
@@ -150,8 +148,7 @@ export class GetNotesSettingTab extends PluginSettingTab {
 			.setDesc("请选择同步后的笔记存放地址，如地址不存在，将会自动创建。")
 			.addText((text) => {
 				text
-					 
-					.setPlaceholder("GetBiji")
+					.setPlaceholder("Getbiji")
 					.setValue(this.plugin.settings.folderPath)
 					.onChange(async (value) => {
 						this.plugin.settings.folderPath = value.trim() || "GetBiji";
@@ -171,7 +168,7 @@ export class GetNotesSettingTab extends PluginSettingTab {
 	/** 页签「关于」：仅作者信息 */
 	private renderAboutTab(container: HTMLElement): void {
 		container.createEl("p", {
-			text: "Author: Jiashu",
+			text: "作者 jiashu",
 			cls: "setting-item-description",
 		});
 	}

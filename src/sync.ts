@@ -732,7 +732,7 @@ export async function runSync(plugin: GetNotesPluginLike, overrideMode?: "increm
 	const gapMs = Number.isFinite(requestGapMs) ? Math.min(5000, Math.max(0, requestGapMs)) : 600;
 	const mode = overrideMode ?? (syncMode === "incremental" ? "incremental" : "full");
 	if (!clientId.trim() || !apiKey.trim()) {
-		new Notice("请先在设置中填写 client id 与 API key。");
+		new Notice("请先在设置页完成同步信息配置。");
 		return;
 	}
 
