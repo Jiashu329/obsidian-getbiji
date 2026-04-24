@@ -598,7 +598,10 @@ export class BloggerSelectModal extends Modal {
 		const iconSvg = this.getPlatformIcon(p);
 		if (iconSvg) {
 			const iconEl = tag.createSpan({ cls: "getbiji-platform-icon" });
-			iconEl.innerHTML = iconSvg;
+			const parser = new DOMParser();
+			const svgDoc = parser.parseFromString(iconSvg, "image/svg+xml");
+			const svgElement = svgDoc.documentElement;
+			iconEl.appendChild(svgElement);
 			tag.createSpan({ text: this.getPlatformName(p) });
 		} else {
 			tag.setText(platform);

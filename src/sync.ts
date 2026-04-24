@@ -5,6 +5,7 @@ import {
 	type NoteDetail,
 	type NoteListItem,
 	type BloggerContentDetail,
+	type BloggerContentItem,
 } from "./get-api";
 import type { GetNotesPluginLike } from "./context";
 import { KnowledgeBaseSyncOptions, SyncOptions, SyncProgressModal, BloggerSyncOptions } from "./sync-ui";
@@ -1010,7 +1011,7 @@ async function collectAllBloggerContents(
 	isCancelled: () => boolean,
 	onPage: (batchIndex: number, lastBatch: number, total: number) => void | Promise<void>,
 ) {
-	const items: any[] = [];
+	const items: BloggerContentItem[] = [];
 	const seenIds = new Set<string>();
 
 	for (let page = 1; page <= 1000; page++) {
@@ -1042,7 +1043,7 @@ async function performBloggerSyncPipeline(
 	plugin: GetNotesPluginLike,
 	client: GetNoteApiClient,
 	modal: SyncProgressModal,
-	items: any[],
+	items: BloggerContentItem[],
 	options: BloggerSyncOptions,
 	folder: string,
 	gapMs: number,
@@ -1149,7 +1150,7 @@ async function performBloggerSyncPipeline(
 }
 
 /** 博主内容转 Markdown */
-function bloggerContentToMarkdown(detail: any, bloggerName: string, platform: string): string {
+function bloggerContentToMarkdown(detail: BloggerContentDetail, bloggerName: string, platform: string): string {
 	const fm = [
 		"---",
 		`get_note_id: "${detail.post_id_alias}"`,
