@@ -151,6 +151,9 @@
 	font-weight: 600;
 	font-size: 1.1em;
 	margin-bottom: 4px;
+	display: flex;
+	align-items: center;
+	gap: 8px;
 }
 
 .getbiji-kb-desc {
@@ -188,4 +191,41 @@
 
 .getbiji-back-btn {
 	margin-bottom: 12px;
+}
+
+.getbiji-platform-tag {
+	font-weight: 400;
+	font-size: 0.75em;
+	color: var(--text-muted);
+	background: var(--background-secondary);
+	padding: 2px 8px;
+	border-radius: 12px;
+	border: 1px solid var(--background-modifier-border);
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	vertical-align: middle;
+}
+
+.getbiji-platform-icon {
+	width: 14px;
+	height: 14px;
+	display: flex;
+	align-items: center;
+}
+
+.getbiji-platform-icon svg {
+	width: 100%;
+	height: 100%;
+}
+
+.platform-douyin {
+	color: #ffffff;
+	background: #1c1c1e;
+	border-color: #3a3a3c;
+}
+
+.platform-wechat {
+	color: #07c160;
+	border-color: rgba(7, 193, 96, 0.3);
 }

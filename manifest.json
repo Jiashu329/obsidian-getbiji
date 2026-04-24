@@ -1,9 +1,9 @@
 {
 	"id": "getbiji",
-	"name": "GetBiji",
+	"name": "Getbiji",
 	"version": "1.0.0",
 	"minAppVersion": "1.4.10",
-	"description": "Sync Get notes to your vault using the biji.com Open API.",
+	"description": "Sync Get notes to Obsidian using the biji.com API.",
 	"author": "Jiashu",
 	"isDesktopOnly": false
 }

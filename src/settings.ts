@@ -107,7 +107,7 @@ export class GetNotesSettingTab extends PluginSettingTab {
 		openApiLink.setAttr("target", "_blank");
 		openApiLink.setAttr("rel", "noopener");
 		intro.createSpan({
-			text: "中获取Client ID和API Key。所有密钥均存本地。",
+			text: "中获取 Client ID 和 API key。所有密钥均存本地。",
 		});
 
 		new Setting(container)

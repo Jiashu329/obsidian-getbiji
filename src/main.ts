@@ -1,7 +1,7 @@
 import { Plugin } from "obsidian";
 import { DEFAULT_SETTINGS, GetNotesSettingTab, type GetNotesSettings } from "./settings";
-import { runSync, runKnowledgeBaseSync } from "./sync";
-import { SyncStartModal, KnowledgeBaseSelectModal } from "./sync-ui";
+import { runSync, runKnowledgeBaseSync, runBloggerSync } from "./sync";
+import { SyncStartModal, KnowledgeBaseSelectModal, BloggerSelectModal } from "./sync-ui";
 import { GetNoteApiClient } from "./get-api";
 import type { SyncModalLike } from "./context";
 
@@ -18,24 +18,16 @@ export default class GetNotesPlugin extends Plugin {
 		await this.loadSettings();
 		this.statusBarItem = this.addStatusBarItem();
 
-		// 左侧功能区：默认增量更新
-		this.addRibbonIcon("download-cloud", "同步 get 笔记 (增量更新)", () => {
-			void this.syncFromRibbon("incremental");
+		// 左侧功能区：同步我的笔记
+		this.addRibbonIcon("download-cloud", "同步我的笔记", () => {
+			void this.syncMyNotes();
 		});
 
 		this.addCommand({
-			id: "pull-notes-incremental",
-			name: "同步 get 笔记 (增量更新)",
+			id: "pull-notes",
+			name: "同步我的笔记",
 			callback: () => {
-				void this.syncFromRibbon("incremental");
-			},
-		});
-
-		this.addCommand({
-			id: "pull-notes-full",
-			name: "同步 get 笔记 (全量更新)",
-			callback: () => {
-				void this.syncFromRibbon("full");
+				void this.syncMyNotes();
 			},
 		});
 
@@ -44,6 +36,14 @@ export default class GetNotesPlugin extends Plugin {
 			name: "同步指定知识库",
 			callback: () => {
 				void this.syncKnowledgeBase();
+			},
+		});
+
+		this.addCommand({
+			id: "pull-blogger",
+			name: "同步订阅博主",
+			callback: () => {
+				void this.syncBlogger();
 			},
 		});
 
@@ -71,13 +71,37 @@ export default class GetNotesPlugin extends Plugin {
 		}).open();
 	}
 
-	/** 从侧边栏按钮或命令触发同步 */
-	private syncFromRibbon(mode: "incremental" | "full"): void {
+	private syncBlogger(): void {
 		if (this.activeSync) {
 			this.activeSync.modal.isBackground = false;
 			this.activeSync.modal.open();
 			return;
 		}
+
+		const { clientId, apiKey, authUseRawKey } = this.settings;
+		const client = new GetNoteApiClient(apiKey, clientId, authUseRawKey);
+
+		new BloggerSelectModal(this.app, client, (options) => {
+			void (async () => {
+				try {
+					await runBloggerSync(this, options);
+				} catch {
+					// 内部已 Notice
+				}
+			})();
+		}).open();
+	}
+
+	/** 弹出我的笔记同步配置并开始 */
+	private syncMyNotes(): void {
+		if (this.activeSync) {
+			this.activeSync.modal.isBackground = false;
+			this.activeSync.modal.open();
+			return;
+		}
+
+		// 默认模式取设置，也可以在此处改为固定默认值
+		const mode = this.settings.syncMode || "incremental";
 
 		// 弹出前置选择框
 		new SyncStartModal(this.app, mode, (options) => {
@@ -85,7 +109,7 @@ export default class GetNotesPlugin extends Plugin {
 				try {
 					await runSync(this, options);
 				} catch {
-					// runSync 内已 Notice；此处避免未捕获 Promise
+					// runSync 内已 Notice
 				}
 			})();
 		}).open();

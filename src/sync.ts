@@ -4,9 +4,10 @@ import {
 	resolveListNoteIdString,
 	type NoteDetail,
 	type NoteListItem,
+	type BloggerContentDetail,
 } from "./get-api";
 import type { GetNotesPluginLike } from "./context";
-import { KnowledgeBaseSyncOptions, SyncOptions, SyncProgressModal } from "./sync-ui";
+import { KnowledgeBaseSyncOptions, SyncOptions, SyncProgressModal, BloggerSyncOptions } from "./sync-ui";
 
 /** 同步过程中在两次网络请求之间暂停，减轻 429 */
 function sleep(ms: number): Promise<void> {
@@ -867,7 +868,7 @@ async function performSyncPipeline(
 			`存放：${folder}`,
 			`模式：${mode === "incremental" ? "增量" : "全量"}`,
 			`成功的：${imported} 条`,
-			`挑过的：${skipped} 条`,
+			`跳过的：${skipped} 条`,
 			"",
 			"## 同步详情",
 			...writtenTitles.map(t => `- [x] ${t}`),
@@ -885,7 +886,7 @@ async function performSyncPipeline(
 }
 
 /**
- * 全集同步入口
+ * 全量同步入口 (我的笔记)
  */
 export async function runSync(plugin: GetNotesPluginLike, options: SyncOptions): Promise<void> {
 	const { clientId, apiKey, folderPath, authUseRawKey, requestGapMs } = plugin.settings;
@@ -894,8 +895,9 @@ export async function runSync(plugin: GetNotesPluginLike, options: SyncOptions):
 		return;
 	}
 
-	const folder = folderPath.trim() || "GetBiji";
-	await ensureFolder(plugin.app.vault, folder);
+	const baseFolder = folderPath.trim() || "Getbiji";
+	const targetFolder = normalizePath(`${baseFolder}/我的笔记`);
+	await ensureFolder(plugin.app.vault, targetFolder);
 	const client = new GetNoteApiClient(apiKey.trim(), clientId.trim(), authUseRawKey);
 	const modal = new SyncProgressModal(plugin.app, plugin.statusBarItem);
 	
@@ -908,7 +910,7 @@ export async function runSync(plugin: GetNotesPluginLike, options: SyncOptions):
 				modal.setListFetching(idx, last, tot);
 			});
 			if (collected.cancelled) return;
-			await performSyncPipeline(plugin, client, modal, collected.items, options, folder, requestGapMs);
+			await performSyncPipeline(plugin, client, modal, collected.items, options, targetFolder, requestGapMs);
 		} catch (e) {
 			new Notice("同步出错: " + (e instanceof Error ? e.message : String(e)));
 		} finally {
@@ -931,9 +933,8 @@ export async function runKnowledgeBaseSync(plugin: GetNotesPluginLike, options: 
 		return;
 	}
 
-	// 知识库存放在子目录：GetBiji/知识库名称
-	const baseFolder = folderPath.trim() || "GetBiji";
-	const targetFolder = normalizePath(`${baseFolder}/${sanitizeFileName(options.topicName)}`);
+	const baseFolder = folderPath.trim() || "Getbiji";
+	const targetFolder = normalizePath(`${baseFolder}/知识库/${sanitizeFileName(options.topicName)}`);
 	await ensureFolder(plugin.app.vault, targetFolder);
 
 	const client = new GetNoteApiClient(apiKey.trim(), clientId.trim(), authUseRawKey);
@@ -959,4 +960,209 @@ export async function runKnowledgeBaseSync(plugin: GetNotesPluginLike, options: 
 
 	plugin.activeSync.promise = syncPromise;
 	await syncPromise;
+}
+
+/**
+ * 博主同步入口
+ */
+export async function runBloggerSync(plugin: GetNotesPluginLike, options: BloggerSyncOptions): Promise<void> {
+	const { clientId, apiKey, folderPath, authUseRawKey, requestGapMs } = plugin.settings;
+	if (!clientId.trim() || !apiKey.trim()) {
+		new Notice("请先配置同步信息。");
+		return;
+	}
+
+	const baseFolder = folderPath.trim() || "Getbiji";
+	const targetFolder = normalizePath(`${baseFolder}/订阅博主/${sanitizeFileName(options.bloggerName)}`);
+	await ensureFolder(plugin.app.vault, targetFolder);
+
+	const client = new GetNoteApiClient(apiKey.trim(), clientId.trim(), authUseRawKey);
+	const modal = new SyncProgressModal(plugin.app, plugin.statusBarItem);
+	
+	plugin.activeSync = { modal, promise: (async () => {})() };
+	modal.open();
+
+	const syncPromise = (async () => {
+		try {
+			const collected = await collectAllBloggerContents(client, options, 600, () => modal.cancelled, (idx, last, tot) => {
+				modal.setListFetching(idx, last, tot);
+			});
+			if (collected.cancelled) return;
+			
+			await performBloggerSyncPipeline(plugin, client, modal, collected.items, options, targetFolder, requestGapMs);
+		} catch (e) {
+			new Notice("博主内容同步出错: " + (e instanceof Error ? e.message : String(e)));
+		} finally {
+			plugin.activeSync = null;
+			modal.close();
+		}
+	})();
+
+	plugin.activeSync.promise = syncPromise;
+	await syncPromise;
+}
+
+/** 分页抓取博主内容列表 */
+async function collectAllBloggerContents(
+	client: GetNoteApiClient,
+	options: BloggerSyncOptions,
+	gapMs: number,
+	isCancelled: () => boolean,
+	onPage: (batchIndex: number, lastBatch: number, total: number) => void | Promise<void>,
+) {
+	const items: any[] = [];
+	const seenIds = new Set<string>();
+
+	for (let page = 1; page <= 1000; page++) {
+		if (isCancelled()) return { items, cancelled: true };
+
+		const list = await client.listBloggerContents(options.topicId, options.followId, page);
+		const contents = list.contents ?? [];
+		if (contents.length === 0) break;
+
+		let added = 0;
+		for (const c of contents) {
+			if (c.post_id_alias && !seenIds.has(c.post_id_alias)) {
+				seenIds.add(c.post_id_alias);
+				items.push(c);
+				added++;
+			}
+		}
+
+		await onPage(page, added, items.length);
+		if (!list.has_more) break;
+		await sleep(Math.min(300, gapMs));
+	}
+
+	return { items, cancelled: false };
+}
+
+/** 执行博主同步流水线 */
+async function performBloggerSyncPipeline(
+	plugin: GetNotesPluginLike,
+	client: GetNoteApiClient,
+	modal: SyncProgressModal,
+	items: any[],
+	options: BloggerSyncOptions,
+	folder: string,
+	gapMs: number,
+) {
+	const { afterDate, forceUpdate, mode } = options;
+
+	// 1. 时间过滤 (基于 post_publish_time)
+	if (afterDate !== undefined) {
+		items = items.filter((it) => {
+			const pub = it.post_publish_time ? new Date(it.post_publish_time).getTime() : 0;
+			return pub >= afterDate;
+		});
+	}
+
+	if (items.length === 0) {
+		modal.setDone("没有满足时间筛选的内容。");
+		await modal.flush();
+		return;
+	}
+
+	modal.startItemPhase(items.length);
+	await modal.flush();
+
+	// 2. 识别本地已有文件
+	const localFileMap = new Map<string, TFile>();
+	for (const f of plugin.app.vault.getMarkdownFiles()) {
+		const fm = plugin.app.metadataCache.getFileCache(f)?.frontmatter;
+		if (fm && fm["get_note_id"]) {
+			localFileMap.set(String(fm["get_note_id"]), f);
+		}
+	}
+
+	let imported = 0;
+	let skipped = 0;
+	const writtenTitles: string[] = [];
+
+	for (let i = 0; i < items.length; i++) {
+		if (modal.cancelled) break;
+
+		const item = items[i]!;
+		const postId = item.post_id_alias;
+		const existingFile = localFileMap.get(postId);
+
+		if (mode === "incremental" && !forceUpdate && existingFile) {
+			skipped++;
+			modal.setItemProgress(i + 1, items.length, `[跳过] ${item.post_name}`);
+			await modal.flush();
+			continue;
+		}
+
+		modal.setItemProgress(i + 1, items.length, `${existingFile ? "[更新]" : "[创建]"} ${item.post_name}`);
+		await modal.flush();
+
+		try {
+			const detail = await client.getBloggerContentDetail(options.topicId, postId);
+			const markdown = bloggerContentToMarkdown(detail, options.bloggerName, options.platform);
+			
+			// 限制文件名长度，防止超出系统限制（取前 100 字）
+			let titleForFile = item.post_name || "未命名内容";
+			if (titleForFile.length > 100) titleForFile = titleForFile.substring(0, 100);
+			const basename = sanitizeFileName(titleForFile);
+
+			if (existingFile) {
+				await plugin.app.vault.modify(existingFile, markdown);
+			} else {
+				const path = normalizePath(`${folder}/${basename}.md`);
+				await plugin.app.vault.create(path, markdown);
+			}
+			imported++;
+			writtenTitles.push(item.post_name);
+		} catch (e) {
+			console.error(`同步博主内容 ${item.post_name} 失败`, e);
+		}
+
+		if (gapMs > 0) await sleep(gapMs);
+	}
+
+	// 统一写入同步报告
+	try {
+		const reportPath = normalizePath(`${plugin.settings.folderPath || "Getbiji"}/同步报告.md`);
+		let content = "";
+		const existingReport = plugin.app.vault.getAbstractFileByPath(reportPath);
+		if (existingReport instanceof TFile) {
+			content = await plugin.app.vault.read(existingReport);
+		} else {
+			content = "# Getbiji 同步报告\n\n";
+		}
+		
+		const displayTitles = writtenTitles.slice(0, 5).map(t => t.length > 50 ? t.substring(0, 50) + "..." : t);
+		const newLog = `### 博主同步: ${options.bloggerName} (${new Date().toLocaleString()})\n` +
+					   `- 模式: ${mode}\n` +
+					   `- 成功: ${imported}\n` +
+					   `- 跳过: ${skipped}\n` +
+					   `- 详情: ${displayTitles.join(", ")}${writtenTitles.length > 5 ? "..." : ""}\n\n`;
+		
+		if (existingReport instanceof TFile) {
+			await plugin.app.vault.modify(existingReport, content + newLog);
+		} else {
+			await plugin.app.vault.create(reportPath, content + newLog);
+		}
+	} catch (e) { console.error("更新同步报告失败", e); }
+
+	modal.setDone(`博主同步完成！写入 ${imported} 条。`);
+}
+
+/** 博主内容转 Markdown */
+function bloggerContentToMarkdown(detail: any, bloggerName: string, platform: string): string {
+	const fm = [
+		"---",
+		`get_note_id: "${detail.post_id_alias}"`,
+		`blogger: ${JSON.stringify(bloggerName)}`,
+		`platform: ${JSON.stringify(platform)}`,
+		`publish_time: "${detail.post_publish_time}"`,
+		`tags: [订阅博主]`,
+		"---",
+		"",
+	];
+
+	const summaryCallout = detail.post_summary ? 
+		`> [!abstract] AI 摘要\n> ${detail.post_summary.replace(/\n/g, "\n> ")}\n\n---\n\n` : "";
+
+	return [...fm, `# ${detail.post_title || detail.post_name}`, "", summaryCallout, detail.post_media_text].join("\n");
 }

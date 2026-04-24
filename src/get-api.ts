@@ -209,6 +209,31 @@ export class GetNoteApiClient {
 			page,
 		});
 	}
+
+	/** 获取订阅博主列表 */
+	async listBloggers(topicId: string, page = 1): Promise<ListBloggersData> {
+		return this.getJson<ListBloggersData>("/resource/knowledge/bloggers", {
+			topic_id: topicId,
+			page,
+		});
+	}
+
+	/** 获取博主内容列表 (分页) */
+	async listBloggerContents(topicId: string, followId: number | string, page: number): Promise<ListBloggerContentsData> {
+		return this.getJson<ListBloggerContentsData>("/resource/knowledge/blogger/contents", {
+			topic_id: topicId,
+			follow_id: String(followId),
+			page,
+		});
+	}
+
+	/** 获取博主内容详情 */
+	async getBloggerContentDetail(topicId: string, postId: string): Promise<BloggerContentDetail> {
+		return this.getJson<BloggerContentDetail>("/resource/knowledge/blogger/content/detail", {
+			topic_id: topicId,
+			post_id: postId,
+		});
+	}
 }
 
 export interface KnowledgeBaseStats {
@@ -236,4 +261,41 @@ export interface ListKnowledgeNotesData {
 	notes: NoteListItem[];
 	has_more: boolean;
 	total: number;
+}
+
+export interface BloggerItem {
+	follow_id: number;
+	account_name: string;
+	account_icon: string;
+	platform: string;
+	follow_time: string;
+	/** 扩展：记录属于哪个专题，UI 展示用 */
+	topic_name?: string;
+	topic_id?: string;
+}
+
+export interface ListBloggersData {
+	bloggers: BloggerItem[];
+	has_more: boolean;
+}
+
+export interface BloggerContentItem {
+	post_id_alias: string;
+	post_name: string;
+	post_summary: string;
+	post_publish_time: string;
+}
+
+export interface ListBloggerContentsData {
+	contents: BloggerContentItem[];
+	has_more: boolean;
+}
+
+export interface BloggerContentDetail {
+	post_id_alias: string;
+	post_name: string;
+	post_title: string;
+	post_summary: string;
+	post_media_text: string;
+	post_publish_time: string;
 }
