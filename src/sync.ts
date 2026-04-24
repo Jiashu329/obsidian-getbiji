@@ -862,14 +862,14 @@ async function performSyncPipeline(
 	// 3. 生成同步报告
 	try {
 		const reportLines = [
-			`# GetBiji 同步报告`,
+			`# Getbiji 同步报告`,
 			`时间：${new Date().toLocaleString()}`,
 			`存放：${folder}`,
 			`模式：${mode === "incremental" ? "增量" : "全量"}`,
 			`成功的：${imported} 条`,
 			`挑过的：${skipped} 条`,
 			"",
-			"## 详情",
+			"## 同步详情",
 			...writtenTitles.map(t => `- [x] ${t}`),
 			...skippedTitles.map(t => `- [ ] ${t} (已存在)`),
 		];
@@ -890,7 +890,7 @@ async function performSyncPipeline(
 export async function runSync(plugin: GetNotesPluginLike, options: SyncOptions): Promise<void> {
 	const { clientId, apiKey, folderPath, authUseRawKey, requestGapMs } = plugin.settings;
 	if (!clientId.trim() || !apiKey.trim()) {
-		new Notice("请先配置 Client ID 和 API Key。");
+		new Notice("请先配置 Client ID 和 API key。");
 		return;
 	}
 

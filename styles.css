@@ -185,3 +185,7 @@
 	padding: 40px 0;
 	color: var(--text-muted);
 }
+
+.getbiji-back-btn {
+	margin-bottom: 12px;
+}

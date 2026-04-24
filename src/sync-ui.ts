@@ -354,7 +354,6 @@ export class KnowledgeBaseSelectModal extends Modal {
 		el.createEl("h2", { text: `同步配置：${this.selectedKb.name}` });
 		
 		const backBtn = el.createEl("button", { text: "← 返回选择", cls: "getbiji-back-btn" });
-		backBtn.style.marginBottom = "12px";
 		backBtn.addEventListener("click", () => {
 			this.step = "select";
 			this.render();
