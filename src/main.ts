@@ -2,6 +2,7 @@ import { Plugin } from "obsidian";
 import { DEFAULT_SETTINGS, GetNotesSettingTab, type GetNotesSettings } from "./settings";
 import { runSync } from "./sync";
 import { SyncStartModal } from "./sync-ui";
+import type { SyncModalLike } from "./context";
 
 /**
  * Get 笔记 → Obsidian 同步插件入口类。
@@ -10,7 +11,7 @@ import { SyncStartModal } from "./sync-ui";
 export default class GetNotesPlugin extends Plugin {
 	settings!: GetNotesSettings;
 	statusBarItem!: HTMLElement;
-	activeSync: { modal: any; promise: Promise<void> } | null = null;
+	activeSync: { modal: SyncModalLike; promise: Promise<void> } | null = null;
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
@@ -49,13 +50,14 @@ export default class GetNotesPlugin extends Plugin {
 		}
 
 		// 弹出前置选择框
-		new SyncStartModal(this.app, mode, async (options) => {
-			try {
-				const promise = runSync(this, options);
-				await promise;
-			} catch {
-				// runSync 内已 Notice；此处避免未捕获 Promise
-			}
+		new SyncStartModal(this.app, mode, (options) => {
+			void (async () => {
+				try {
+					await runSync(this, options);
+				} catch {
+					// runSync 内已 Notice；此处避免未捕获 Promise
+				}
+			})();
 		}).open();
 	}
 

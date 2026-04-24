@@ -42,3 +42,13 @@
 .getbiji-settings-root .getbiji-sync-intro {
 	margin-bottom: 1em;
 }
+
+/* 同步弹窗样式 */
+.getbiji-quick-btn {
+	margin-right: 8px;
+	margin-bottom: 8px;
+}
+
+.getbiji-sync-modal-minwidth {
+	min-width: 400px;
+}

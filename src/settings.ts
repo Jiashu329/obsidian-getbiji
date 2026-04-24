@@ -1,4 +1,4 @@
-import { App, Notice, Plugin, PluginSettingTab, Setting } from "obsidian";
+import { App, Plugin, PluginSettingTab, Setting } from "obsidian";
 import { VaultFolderPathSuggest } from "./vault-folder-suggest";
 
 /** 同步策略：全量始终覆盖；增量在本地已有同 get_note_id 时跳过该条 */

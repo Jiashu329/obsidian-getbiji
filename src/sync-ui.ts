@@ -53,9 +53,7 @@ export class SyncStartModal extends Modal {
 		// 2. 快捷按钮
 		const quickButtons = contentEl.createDiv({ cls: "getbiji-quick-buttons" });
 		const addQuickBtn = (label: string, days: number | null) => {
-			const btn = quickButtons.createEl("button", { text: label, cls: "mod-subtle" });
-			btn.style.marginRight = "8px";
-			btn.style.marginBottom = "8px";
+			const btn = quickButtons.createEl("button", { text: label, cls: "mod-subtle getbiji-quick-btn" });
 			btn.addEventListener("click", () => {
 				if (days === null) {
 					// 这里的逻辑：如果是 null，我们就清空日期选择器及 options
@@ -133,7 +131,7 @@ export class SyncProgressModal extends Modal {
 	onOpen(): void {
 		const { contentEl } = this;
 		contentEl.empty();
-		this.modalEl.style.minWidth = "400px";
+		this.modalEl.addClass("getbiji-sync-modal-minwidth");
 		contentEl.addClass("getbiji-sync-modal");
 		contentEl.createEl("h2", { text: "同步 get 笔记" });
 		this.statusEl = contentEl.createDiv({ text: "准备中…" });
