@@ -1,138 +1,89 @@
-![GetBiji Banner](assets/preview.png)
+<p align="center">
+  <img src="assets/preview.png" alt="GetBiji Banner" width="100%">
+</p>
 
-# GetBiji（Obsidian 插件）
+<p align="center">
+  <a href="https://github.com/Jiashu329/obsidian-getbiji/releases">
+    <img src="https://img.shields.io/github/manifest-json/v/Jiashu329/obsidian-getbiji?color=blue&label=version" alt="Version">
+  </a>
+  <img src="https://img.shields.io/badge/Obsidian-v1.4.16+-8b6bef?logo=obsidian&logoColor=white" alt="Obsidian Version">
+  <img src="https://img.shields.io/badge/Node-v18+-339933?logo=node.js&logoColor=white" alt="Node Version">
+  <img src="https://img.shields.io/github/license/Jiashu329/obsidian-getbiji?color=green" alt="License">
+</p>
 
-这是一款 [Obsidian](https://obsidian.md/) 插件，用于将 [Get 笔记](https://www.biji.com) 云端内容，通过[开放平台 API](https://www.biji.com/openapi) **同步到当前 Obsidian 库**，生成标准 Markdown 笔记（含 YAML 文档属性、正文与链接汇总等）。
+<h1 align="center">Getbiji for Obsidian</h1>
 
-**源码仓库**：[https://github.com/Jiashu329/obsidian-getbiji](https://github.com/Jiashu329/obsidian-getbiji)
+<p align="center">
+  这是一款 <a href="https://obsidian.md/">Obsidian</a> 插件，通过 <a href="https://www.biji.com/openapi">Get 笔记开放平台 API</a> 将云端内容无缝同步到本地库，生成结构化的标准 Markdown 笔记。
+</p>
 
 ---
 
-若在使用中有疑问、希望增加能力或发现异常，欢迎提 [Issues](https://github.com/Jiashu329/obsidian-getbiji/issues)。  
-如果觉得有帮助，欢迎点亮 **Star**。
+## 🏗️ 核心功能
 
-## 功能
+- 🚀 **智能同步引擎**：支持**全量覆盖**或**增量更新**，支持按「最近3天/1周/1月」快速筛选。
+- 📦 **知识库同步 (新!)**：支持按**指定知识库**单独同步，自动在同步目录下按知识库名称创建子文件夹。
+- 🔍 **精准匹配**：基于 `get_note_id` 匹配，即使修改文件名或移动路径也能精准更新，杜绝重复。
+- 🔗 **内链转换**：自动将 Get 站内链接转换为 Obsidian 标准**双链** `[[标题]]`。
+- 🏷️ **属性管理**：完美支持 Obsidian YAML Frontmatter，涵盖标签、URL、创建/更新时间及附件元数据。
+- 📱 **全平台适配**：适配桌面端与移动端，随时随地管理笔记。
 
-- ☑️ **灵活同步范围**：支持选择**最近 3 天、1 周、1 月或自定义日期**进行同步，避免全量跑库太久。
-- ☑️ **策略可控**：可选**全量覆盖**或**增量更新**；增量模式下可勾选是否强制覆盖本地已有笔记。
-- ☑️ **按 ID 精准更新**：采用 `get_note_id` 匹配，即使你**移动了文件或修改了本地标题**，同步时依然能精准覆盖旧文件，不会产生重复笔记。
-- ☑️ **自动重命名**：当云端标题修改时，同步会自动帮你重命名本地文件，保持文件名与标题同步。
-- ☑️ **同步目录智能匹配**：目录可手填或从库内已有文件夹联想，不存在时自动创建。
-- ☑️ **双链改写**：自动将正文内指向 Get 站内笔记的链接改写为 Obsidian **双链** `[[标题]]`。
-- ☑️ **全面兼容**：支持桌面端与移动端，完美适配 Obsidian 各类文档属性。
+## 📸 效果展示
 
-## 效果
+同步完成后，插件会根据云端内容自动补全 YAML 属性、正文、附件链接以及音频、网页摘录等模块。
 
-同步完成后，在设定的同步目录下会出现以标题命名的 `.md` 文件：可在编辑模式下查看 **YAML 属性**，在阅读模式下查看 **「关联链接」**、正文与可选的网页摘录、音频块等。
+> **同步报告**：每次同步完成后会生成一份详细的「同步报告.md」，记录写入与跳过的详细清单。
 
-## 如何使用
+## 🛠️ 如何使用
 
-### 配置凭证
+### 1. 获取凭证
+前往 [Get 笔记开放平台](https://www.biji.com/openapi) 创建应用并获取你的 **Client ID** 和 **API key**。
 
-1. 打开 **设置 → GetBiji**（插件名称以界面为准）。
-2. 在 **「同步信息」** 中填写 **Client ID**、**API Key**（在 [Get 笔记开放平台](https://www.biji.com/openapi) 的应用管理、API Key 页面创建并获取）。
-3. 设置 **同步目录**（相对于当前库的路径；可输入关键词从已有文件夹列表中选择）。
+### 2. 插件配置
+- 进入 Obsidian **设置 → Getbiji**。
+- 输入凭证，并选择你的同步存放目录。
 
-### 执行同步
+### 3. 开始同步
+- **全局同步**：点击左侧 Ribbon 栏的云图标，或通过命令面板 `Cmd/Ctrl + P` 运行 `同步 get 笔记`。
+- **知识库同步**：通过命令面板运行 `同步指定知识库`，在弹窗中选择目标知识库并确认同步策略。
 
-1. 按 `Ctrl/Cmd + P` 打开命令面板，搜索 **「同步 Get 笔记」** 并执行；或点击左侧功能区 **云下载** 图标。
-2. 等待弹窗完成「拉取列表 → 逐条写入」；可随时 **取消同步**。
+## ⚙️ 设置选项
 
-### 同步方式说明
+| 设置项 | 说明 |
+| :--- | :--- |
+| **Client ID** | 开放平台应用标识 |
+| **API key** | 开放平台密钥 |
+| **同步目录** | 笔记写入的相对路径，如 `Getbiji` |
+| **请求间隔** | 每条笔记同步后的暂停时间（防止被限流） |
 
-在 **设置 → GetBiji → 同步方式** 中选择：
+## 📥 安装方式
 
-- **全量更新（覆盖）**：每次从云端从头拉列表，对每条笔记拉取详情并**始终覆盖写入**（与本地是否已有同 `get_note_id` 无关）。
-- **增量更新（跳过已有 ID）**：同样从头拉完整列表，但若同步目录下已有 Markdown 的 YAML 中含**相同 `get_note_id`**，则**跳过该条**（不拉详情、不改文件）。识别依赖 Obsidian 对 frontmatter 的元数据索引。
+### 方法 A：社区插件（推荐）
+在 Obsidian **设置 → 第三方插件 → 浏览** 中搜索 `Getbiji` 进行安装。
 
-列表请求始终从接口的 `since_id=0` 开始分页，**不再在本地持久化列表游标**。
+### 方法 B：手动安装
+1. 从 [Releases](https://github.com/Jiashu329/obsidian-getbiji/releases) 下载最新版的 `main.js`, `manifest.json`, `styles.css`。
+2. 将文件放入库目录 `.obsidian/plugins/getbiji/` 下。
+3. 在设置中开启插件。
 
-## 设置
+## 🧑‍💻 开发者相关
 
+```bash
+# 安装依赖
+npm install
+# 开发模式
+npm run dev
+# 构建发布
+npm run build
+```
 
-| 设置项   | 说明                                  |
-| ----- | ----------------------------------- |
-| Client ID | 开放平台应用标识，请求头 `X-Client-ID`          |
-| API Key   | 开放平台密钥，默认 `Authorization: Bearer …` |
-| 同步目录  | 笔记写入的相对路径，默认可为 `GetBiji`            |
-| 同步方式  | 全量覆盖写入，或按 `get_note_id` 跳过已有笔记（增量）   |
+## 📄 许可证
 
-> 更多高级参数（如请求间隔、鉴权方式等）若在当前版本中未在界面展示，可能仍保存在插件数据文件中并以默认值参与逻辑；以实际发布版本为准。
+本项目基于 [GPL-3.0](./LICENSE) 协议开源。
 
-## 同步内容与 YAML 字段
+---
 
-下列为常见写入 **文档属性（frontmatter）** 的字段（以接口实际返回为准；若某条笔记详情不可用，内容可能退化为列表接口字段，附件等可能不完整）。
-
-
-| 字段                          | 说明                                                              |
-| --------------------------- | --------------------------------------------------------------- |
-| `get_note_id`               | Get 笔记 ID                                                       |
-| `title`                     | 标题                                                              |
-| `note_type`                 | 笔记类型                                                            |
-| `source`                    | 来源                                                              |
-| `updated_at` / `created_at` | 更新时间 / 创建时间                                                     |
-| `tags`                      | 标签列表                                                            |
-| `Link`                      | 首条 `type: link` 附件时，值为 `"[标题](url)"` 形式                         |
-| `get_note_attachments`      | **仅非 link 类型**附件的结构化列表（含 `type`、`url`、`title` 等）；纯链接类附件不再重复写入此块 |
-
-
-正文内可能包含：**笔记正文 / 引用**、**关联链接**（汇总外链）、**链接**（网页类）、**音频** 等区块，具体取决于云端数据。
-
-## 如何安装
-
-### 从 Obsidian 社区插件安装（上架通过后）
-
-1. 打开 Obsidian **设置 → 第三方插件**，关闭安全模式（若从未开启过第三方插件，按提示操作）。
-2. 进入 **浏览**，搜索 **GetBiji**（或插件 ID `getbiji`）。
-3. **安装** 并 **启用**。
-
-### 手动安装
-
-1. 打开 [GitHub Releases](https://github.com/Jiashu329/obsidian-getbiji/releases)，下载对应版本的 `**main.js`**、`**manifest.json**`，若 Release 中包含则一并下载 `**styles.css**`。
-2. 在你的 Obsidian **库根目录**下创建路径：`.obsidian/plugins/getbiji/`（若 `.obsidian` 为隐藏文件夹，请在系统中显示隐藏项）。
-3. 将上述文件放入 `getbiji` 文件夹（文件夹名须与 `manifest.json` 中的 `id` 一致）。
-4. 回到 Obsidian：**设置 → 第三方插件** 中启用 **GetBiji**。
-
-## 如何开发调试
-
-1. 进入测试库目录下的 `.obsidian/plugins/`。
-2. 克隆仓库：
-  `git clone https://github.com/Jiashu329/obsidian-getbiji.git`
-3. 进入目录：`cd obsidian-getbiji`
-4. 安装依赖：`npm install`
-5. 构建：`npm run build`（监听构建可使用 `npm run dev`）
-6. 在 Obsidian 中 **重新加载应用** 或重载插件。
-7. 修改源码后重复构建即可调试。
-
-## 安全与隐私
-
-- API Key 等凭证仅保存在本机 Obsidian 插件数据目录，**不会**上传到插件作者服务器。  
-- 请勿将包含密钥的配置或数据文件提交到公开仓库。
-
-## 免责声明
-
-1. 使用前请至少保留一种**备份方式**（如 Obsidian 官方同步、Git、网盘等），避免数据丢失。
-2. 本插件依赖 Get 笔记开放平台；**接口变更、限流、鉴权策略**等可能导致同步失败或内容不完整，请以官方文档为准。
-3. 本程序仅供学习与交流；因使用本插件造成的直接或间接损失，由使用者自行承担；请在理解同步逻辑与「影响」表格后再使用。
-4. 使用或修改本插件，即视为同意上述说明。
-
-## 影响（同步会改什么）
-
-
-| 操作   | 条件                  | 影响                                |
-| ---- | ------------------- | --------------------------------- |
-| 同步笔记 | 目标路径尚无文件            | 在「同步目录」下**新建**对应标题的 `.md`         |
-| 同步笔记 | 目标路径**已存在同名** `.md` | **整文件覆盖**为本次云端内容（以云端为准）           |
-| 取消同步 | 中途取消                | 已写入的笔记保留；**不会**更新列表游标（`since_id`） |
-| 详情失败 | 接口报错等               | 可能使用列表字段生成略简内容；附件、正文可能少于完整详情      |
-
-
-## 许可证
-
-本项目以 **GNU General Public License v3.0（GPL-3.0）** 发布，见仓库根目录 `[LICENSE](./LICENSE)`。
-
-## 相关链接
-
-- Get 笔记开放平台：[https://www.biji.com/openapi](https://www.biji.com/openapi)  
-- Obsidian 插件发布说明：[https://docs.obsidian.md/Plugins/Releasing/Submit+your+plugin](https://docs.obsidian.md/Plugins/Releasing/Submit+your+plugin)
-
+<p align="center">
+  如果这个插件对你有帮助，欢迎点个 <b>Star</b> ⭐<br>
+  如有疑问或建议，请提交 <a href="https://github.com/Jiashu329/obsidian-getbiji/issues">Issues</a>
+</p>
