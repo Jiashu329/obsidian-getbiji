@@ -1,4 +1,4 @@
-import { App, Plugin, PluginSettingTab, Setting } from "obsidian";
+import { App, Notice, Plugin, PluginSettingTab, Setting } from "obsidian";
 import { VaultFolderPathSuggest } from "./vault-folder-suggest";
 
 /** 同步策略：全量始终覆盖；增量在本地已有同 get_note_id 时跳过该条 */
@@ -10,7 +10,7 @@ export interface GetNotesSettings {
 	clientId: string;
 	/** 开放平台 API Key（Bearer） */
 	apiKey: string;
-	/** 笔记写入的 Vault 相对目录 */
+	/** 同步目录的 Vault 相对路径 */
 	folderPath: string;
 	/**
 	 * 全量：逐项拉详情并覆盖写入。
@@ -62,7 +62,7 @@ export class GetNotesSettingTab extends PluginSettingTab {
 		containerEl.addClass("getbiji-settings-root");
 
 
-		// 页签栏：同步信息 | 关于（其余参数不在界面展示，仍保留默认值或历史 data）
+		// 页签栏：同步信息 | 关于
 		const tabBar = containerEl.createDiv({ cls: "getbiji-tab-bar" });
 		this.renderTabButton(tabBar, "sync", "同步信息");
 		this.renderTabButton(tabBar, "about", "关于");
@@ -142,7 +142,6 @@ export class GetNotesSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				});
 			});
-
 		new Setting(container)
 			.setName("同步目录")
 			.setDesc("请选择同步后的笔记存放地址，如地址不存在，将会自动创建。")
@@ -154,7 +153,7 @@ export class GetNotesSettingTab extends PluginSettingTab {
 						this.plugin.settings.folderPath = value.trim() || "GetBiji";
 						await this.plugin.saveSettings();
 					});
-				// 路径自动补全：点选后由 suggest 延迟 setValue，此处只写配置，勿再 text.setValue（避免重复触发 input）
+				// 路径自动补全
 				new VaultFolderPathSuggest(this.app, text.inputEl, (picked) => {
 					void (async () => {
 						this.plugin.settings.folderPath = picked.trim() || "GetBiji";
@@ -162,7 +161,6 @@ export class GetNotesSettingTab extends PluginSettingTab {
 					})();
 				});
 			});
-
 	}
 
 	/** 页签「关于」：仅作者信息 */

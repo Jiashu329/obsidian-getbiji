@@ -6,7 +6,7 @@ import {
 	type NoteListItem,
 } from "./get-api";
 import type { GetNotesPluginLike } from "./context";
-import { SyncProgressModal } from "./sync-ui";
+import { SyncOptions, SyncProgressModal } from "./sync-ui";
 
 /** 同步过程中在两次网络请求之间暂停，减轻 429 */
 function sleep(ms: number): Promise<void> {
@@ -14,15 +14,15 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * 扫描同步目录下 Markdown，收集 YAML 中的 get_note_id（字符串，兼容大整数）。
+ * 扫描全库 Markdown，收集 YAML 中的 get_note_id（字符串，兼容大整数）。
  */
-function collectLocalGetNoteIds(app: App, folderRaw: string): Set<string> {
-	const folderNorm = normalizePath(folderRaw.trim() || "GetBiji");
-	const prefix = `${folderNorm}/`;
-	const ids = new Set<string>();
+/**
+ * 扫描全库 Markdown，收集 YAML 中的 get_note_id（字符串，兼容大整数）。
+ * 返回 Map: get_note_id -> TFile 对象
+ */
+function collectLocalGetNoteMap(app: App): Map<string, TFile> {
+	const idMap = new Map<string, TFile>();
 	for (const f of app.vault.getMarkdownFiles()) {
-		const p = normalizePath(f.path);
-		if (!p.startsWith(prefix)) continue;
 		const fm = app.metadataCache.getFileCache(f)?.frontmatter;
 		if (fm == null) continue;
 		const raw = fm["get_note_id"] as unknown;
@@ -33,9 +33,9 @@ function collectLocalGetNoteIds(app: App, folderRaw: string): Set<string> {
 		} else if (typeof raw === "number" && Number.isFinite(raw) && Number.isSafeInteger(raw)) {
 			digitStr = BigInt(Math.trunc(raw)).toString();
 		}
-		if (digitStr !== undefined) ids.add(digitStr);
+		if (digitStr !== undefined) idMap.set(digitStr, f);
 	}
-	return ids;
+	return idMap;
 }
 
 /**
@@ -116,9 +116,10 @@ function attachmentsToYamlBlock(attachments: NonNullable<NoteDetail["attachments
 export interface NoteMarkdownOptions {
 	idToBasename?: Map<string, string>;
 	folder?: string;
-	/** 写入 YAML 的 get_note_id（大整数用此避免 JSON number 丢精度） */
 	canonicalIdStr?: string;
 }
+
+
 
 /**
  * 按照 Obsidian 规范清理标签：
@@ -162,13 +163,18 @@ export function noteDetailToMarkdown(note: NoteDetail, opt?: NoteMarkdownOptions
 		.filter((t): t is string => typeof t === "string")
 		.map(sanitizeObsidianTag)
 		.filter(Boolean);
+
+	const idForYaml = opt?.canonicalIdStr ?? String(note.id);
+
+
+
 	const tagsBlock =
 		tagNames.length > 0 ? ["tags:", ...tagNames.map(yamlListItem)] : ["tags: []"];
 	const linkRoot =
 		note.attachments && note.attachments.length > 0 ? linkAttachmentsToRootYaml(note.attachments) : [];
 	const attBlock =
 		note.attachments && note.attachments.length > 0 ? attachmentsToYamlBlock(note.attachments) : [];
-	const idForYaml = opt?.canonicalIdStr ?? String(note.id);
+
 	const fm = [
 		"---",
 		`get_note_id: "${idForYaml}"`,
@@ -727,10 +733,12 @@ async function collectAllListPages(
 /**
  * 执行一次同步：先拉完整列表并显示进度，再逐条写入，全程在弹窗中展示进度。
  */
-export async function runSync(plugin: GetNotesPluginLike, overrideMode?: "incremental" | "full"): Promise<void> {
-	const { clientId, apiKey, folderPath, authUseRawKey, requestGapMs, syncMode } = plugin.settings;
+export async function runSync(plugin: GetNotesPluginLike, options: SyncOptions): Promise<void> {
+	const { clientId, apiKey, folderPath, authUseRawKey, requestGapMs } = plugin.settings;
 	const gapMs = Number.isFinite(requestGapMs) ? Math.min(5000, Math.max(0, requestGapMs)) : 600;
-	const mode = overrideMode ?? (syncMode === "incremental" ? "incremental" : "full");
+	const mode = options.mode;
+	const { afterDate, forceUpdate } = options;
+
 	if (!clientId.trim() || !apiKey.trim()) {
 		new Notice("请先在设置页完成同步信息配置。");
 		return;
@@ -741,12 +749,14 @@ export async function runSync(plugin: GetNotesPluginLike, overrideMode?: "increm
 
 	const client = new GetNoteApiClient(apiKey.trim(), clientId.trim(), authUseRawKey);
 
-	const modal = new SyncProgressModal(plugin.app);
+	const modal = new SyncProgressModal(plugin.app, plugin.statusBarItem);
+	plugin.activeSync = { modal, promise: (async () => {})() }; // 先占位
 	modal.open();
 	await modal.flush();
 
-	try {
-		// 不再使用本地 sinceId 游标：列表始终从 since_id=0 分页拉全量目录
+	const syncPromise = (async () => {
+		try {
+			// 不再使用本地 sinceId 游标：列表始终从 since_id=0 分页拉全量目录
 		const collected = await collectAllListPages(
 			client,
 			0,
@@ -765,20 +775,30 @@ export async function runSync(plugin: GetNotesPluginLike, overrideMode?: "increm
 			return;
 		}
 
-		const { items } = collected;
+		let { items } = collected;
+
+		// 1. 时间过滤
+		if (afterDate !== undefined) {
+			items = items.filter((it) => {
+				// Get 笔记返回的 updated_at 通常是 "YYYY-MM-DD HH:mm:ss"
+				const up = it.updated_at ? new Date(it.updated_at).getTime() : 0;
+				return up >= afterDate;
+			});
+		}
 
 		if (items.length === 0) {
-			modal.setDone("没有可同步的笔记（列表为空）。");
+			modal.setDone("没有可同步的笔记（列表为空或不满足时间筛选）。");
 			await modal.flush();
-			new Notice("当前没有可同步的笔记。若云端确有内容，可稍后再试。", 10000);
+			new Notice("没有满足条件的笔记需要同步。", 10000);
 			return;
 		}
 
 		modal.startItemPhase(items.length);
 		await modal.flush();
 
-		// 增量：根据同步目录内已有 get_note_id 决定是否跳过（不拉详情）
-		const localIds = mode === "incremental" ? collectLocalGetNoteIds(plugin.app, folder) : null;
+		// 2. 识别本地已有笔记（基于 get_note_id）
+		// 无论 mode 是增量还是全量，我们都先建好这个索引，方便精准覆盖
+		const localFileMap = collectLocalGetNoteMap(plugin.app);
 
 		// 整批笔记的 id→文件名（纯标题），供路径命名与正文内 biji 链接改写为 Obsidian 双链
 		const idToBasename = buildIdToUniqueBasename(items);
@@ -803,8 +823,11 @@ export async function runSync(plugin: GetNotesPluginLike, overrideMode?: "increm
 			}
 
 			const titleStr = item.title?.trim() || "未命名";
+			const existingFile = localFileMap.get(noteIdStr);
 
-			if (mode === "incremental" && localIds !== null && localIds.has(noteIdStr)) {
+			// 增量策略：
+			// 如果本地已存在该 ID 的文件，且用户并没有要求“覆盖更新”，则跳过。
+			if (mode === "incremental" && !forceUpdate && existingFile) {
 				skipped += 1;
 				skippedTitles.push(titleStr);
 				modal.setItemProgress(i + 1, items.length, `[已存在跳过] ${titleStr}`);
@@ -812,23 +835,38 @@ export async function runSync(plugin: GetNotesPluginLike, overrideMode?: "increm
 				continue;
 			}
 
-			modal.setItemProgress(i + 1, items.length, `[获取并写入] ${titleStr}`);
+			modal.setItemProgress(i + 1, items.length, `${existingFile ? "[更新]" : "[创建]"} ${titleStr}`);
 			await modal.flush();
 
 			const detail = await fetchDetailOrFallback(client, noteIdStr, item);
 			const basename = idToBasename.get(noteIdStr) ?? sanitizeFileName(item.title || "未命名");
-			const path = notePathFromBasename(folder, basename);
+			
 			const markdown = noteDetailToMarkdown(detail, {
 				idToBasename,
 				folder,
 				canonicalIdStr: noteIdStr,
 			});
-			const existing = plugin.app.vault.getAbstractFileByPath(path);
-			if (existing instanceof TFile) {
-				await plugin.app.vault.modify(existing, markdown);
+
+			if (existingFile) {
+				// 1. 更新内容
+				await plugin.app.vault.modify(existingFile, markdown);
+				
+				// 2. 检查是否需要重命名（如果标题改了）
+				const newName = `${basename}.md`;
+				
+				if (existingFile.name !== newName) {
+					const newPath = normalizePath(`${existingFile.parent?.path}/${newName}`);
+					// 只有当目标路径不存在时才重命名，避免冲突
+					if (!plugin.app.vault.getAbstractFileByPath(newPath)) {
+						await plugin.app.vault.rename(existingFile, newPath);
+					}
+				}
 			} else {
+				// 新建：放入同步目录
+				const path = notePathFromBasename(folder, basename);
 				await plugin.app.vault.create(path, markdown);
 			}
+
 			imported += 1;
 			writtenTitles.push(titleStr);
 
@@ -842,7 +880,8 @@ export async function runSync(plugin: GetNotesPluginLike, overrideMode?: "increm
 			const reportLines = [
 				`# GetBiji 同步报告`,
 				`时间：${nowStr}`,
-				`模式：${mode === "incremental" ? "增量" : "全量"}`,
+				`模式：${mode === "incremental" ? "增量同步" : "全量覆盖"}`,
+				`参数：${afterDate ? new Date(afterDate).toLocaleDateString() + " 之后" : "不限时间"}, ${forceUpdate ? "强制覆盖已开启" : "跳过本地已有"}`,
 				``,
 				`## 本次更新写入 (${imported} 条)`,
 				...(writtenTitles.length > 0 ? writtenTitles.map((t) => `- ${t}`) : ["无"]),
@@ -863,7 +902,7 @@ export async function runSync(plugin: GetNotesPluginLike, overrideMode?: "increm
 		}
 
 		const doneDetail =
-			skipped > 0 ? `完成：已写入或更新 ${imported} 条，已跳过 ${skipped} 条（本地已有同 ID）。` : `完成：已写入或更新 ${imported} 条。`;
+			skipped > 0 ? `完成：已写入或更新 ${imported} 条，已跳过 ${skipped} 条。` : `完成：已写入或更新 ${imported} 条。`;
 		modal.setDone(doneDetail);
 		await modal.flush();
 		await sleep(600);
@@ -880,6 +919,11 @@ export async function runSync(plugin: GetNotesPluginLike, overrideMode?: "increm
 		new Notice(`同步失败：${msg}`, 8000);
 		throw e;
 	} finally {
+		plugin.activeSync = null;
 		modal.close();
 	}
+})();
+
+	plugin.activeSync.promise = syncPromise;
+	await syncPromise;
 }

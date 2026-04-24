@@ -7,5 +7,7 @@ import type { GetNotesSettings } from "./settings";
 export interface GetNotesPluginLike {
 	app: App;
 	settings: GetNotesSettings;
+	statusBarItem: HTMLElement;
+	activeSync: { modal: any; promise: Promise<void> } | null;
 	saveSettings(): Promise<void>;
 }
