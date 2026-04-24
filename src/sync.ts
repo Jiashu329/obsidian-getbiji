@@ -6,7 +6,7 @@ import {
 	type NoteListItem,
 } from "./get-api";
 import type { GetNotesPluginLike } from "./context";
-import { SyncOptions, SyncProgressModal } from "./sync-ui";
+import { KnowledgeBaseSyncOptions, SyncOptions, SyncProgressModal } from "./sync-ui";
 
 /** 同步过程中在两次网络请求之间暂停，减轻 429 */
 function sleep(ms: number): Promise<void> {
@@ -57,11 +57,10 @@ function yamlQuotedScalar(s: string): string {
 }
 
 /** 附件里 type=link 时，用 API 的 title + url 拼成 Markdown 链接文案 `[title](url)` */
-/** 附件里 type=link 时，用 API 的 title + url 拼成 Markdown 链接文案 `[title](url)` */
 function attachmentToMarkdownLink(a: { type?: string; title?: string; url: string }): string {
 	let t = (a.title ?? "").replace(/\r?\n|\r/g, " ").trim();
 	if (t.length === 0 && a.type?.toLowerCase() === "audio") {
-		t = "录音文件";
+		t = "录像文/音频";
 	}
 	return t.length > 0 ? `[${t}](${a.url})` : `[](${a.url})`;
 }
@@ -730,199 +729,233 @@ async function collectAllListPages(
 	throw new Error("列表分页超过安全上限，请向官方反馈或缩小同步范围。");
 }
 
-/**
- * 执行一次同步：先拉完整列表并显示进度，再逐条写入，全程在弹窗中展示进度。
- */
-export async function runSync(plugin: GetNotesPluginLike, options: SyncOptions): Promise<void> {
-	const { clientId, apiKey, folderPath, authUseRawKey, requestGapMs } = plugin.settings;
-	const gapMs = Number.isFinite(requestGapMs) ? Math.min(5000, Math.max(0, requestGapMs)) : 600;
-	const mode = options.mode;
-	const { afterDate, forceUpdate } = options;
+/** 分页抓取知识库笔记列表 (page-based) */
+async function collectAllKnowledgeNotes(
+	client: GetNoteApiClient,
+	topicId: string,
+	gapMs: number,
+	isCancelled: () => boolean,
+	onPage: (batchIndex: number, lastBatch: number, total: number) => void | Promise<void>,
+): Promise<{ items: NoteListItem[]; cancelled: boolean }> {
+	const items: NoteListItem[] = [];
+	const seenNoteIds = new Set<string>();
 
-	if (!clientId.trim() || !apiKey.trim()) {
-		new Notice("请先在设置页完成同步信息配置。");
+	for (let page = 1; page <= 1000; page++) {
+		if (isCancelled()) return { items, cancelled: true };
+
+		const list = await client.listKnowledgeNotes(topicId, page);
+		const notes = list.notes ?? [];
+		if (notes.length === 0) break;
+
+		let added = 0;
+		for (const n of notes) {
+			const id = resolveListNoteIdString(n);
+			if (id && !seenNoteIds.has(id)) {
+				seenNoteIds.add(id);
+				items.push(n);
+				added++;
+			}
+		}
+
+		await onPage(page, added, items.length);
+		if (!list.has_more) break;
+		await sleep(Math.min(300, gapMs));
+	}
+
+	return { items, cancelled: false };
+}
+
+/**
+ * 执行通用同步流水线：过滤、逐条拉详情写入、生成报告。
+ */
+async function performSyncPipeline(
+	plugin: GetNotesPluginLike,
+	client: GetNoteApiClient,
+	modal: SyncProgressModal,
+	items: NoteListItem[],
+	options: SyncOptions,
+	folder: string,
+	gapMs: number,
+) {
+	const { afterDate, forceUpdate, mode } = options;
+
+	// 1. 时间过滤
+	if (afterDate !== undefined) {
+		items = items.filter((it) => {
+			const up = it.updated_at ? new Date(it.updated_at).getTime() : 0;
+			return up >= afterDate;
+		});
+	}
+
+	if (items.length === 0) {
+		modal.setDone("没有可同步的笔记（列表为空或不满足时间筛选）。");
+		await modal.flush();
+		new Notice("没有满足条件的笔记需要同步。");
 		return;
 	}
 
-	const folder = folderPath.trim() || "GetBiji";
-	await ensureFolder(plugin.app.vault, folder);
-
-	const client = new GetNoteApiClient(apiKey.trim(), clientId.trim(), authUseRawKey);
-
-	const modal = new SyncProgressModal(plugin.app, plugin.statusBarItem);
-	plugin.activeSync = { modal, promise: (async () => {})() }; // 先占位
-	modal.open();
+	modal.startItemPhase(items.length);
 	await modal.flush();
 
-	const syncPromise = (async () => {
-		try {
-			// 不再使用本地 sinceId 游标：列表始终从 since_id=0 分页拉全量目录
-		const collected = await collectAllListPages(
-			client,
-			0,
-			gapMs,
-			() => modal.cancelled,
-			async (batchIndex, lastBatch, total) => {
-				modal.setListFetching(batchIndex, lastBatch, total);
-				await modal.flush();
-			},
-		);
+	// 2. 识别本地已有笔记
+	const localFileMap = collectLocalGetNoteMap(plugin.app);
+	const idToBasename = buildIdToUniqueBasename(items);
 
-		if (collected.cancelled) {
-			modal.setDone("已取消。");
+	let imported = 0;
+	let skipped = 0;
+	const writtenTitles: string[] = [];
+	const skippedTitles: string[] = [];
+
+	for (let i = 0; i < items.length; i++) {
+		if (modal.cancelled) {
+			modal.setDone(`已取消。已写入 ${imported} 条，已跳过 ${skipped} 条。`);
 			await modal.flush();
-			new Notice("已取消同步。");
 			return;
 		}
 
-		let { items } = collected;
+		const item = items[i]!;
+		const noteIdStr = resolveListNoteIdString(item);
+		if (!noteIdStr) continue;
 
-		// 1. 时间过滤
-		if (afterDate !== undefined) {
-			items = items.filter((it) => {
-				// Get 笔记返回的 updated_at 通常是 "YYYY-MM-DD HH:mm:ss"
-				const up = it.updated_at ? new Date(it.updated_at).getTime() : 0;
-				return up >= afterDate;
-			});
-		}
+		const titleStr = item.title?.trim() || "未命名";
+		const existingFile = localFileMap.get(noteIdStr);
 
-		if (items.length === 0) {
-			modal.setDone("没有可同步的笔记（列表为空或不满足时间筛选）。");
+		if (mode === "incremental" && !forceUpdate && existingFile) {
+			skipped++;
+			skippedTitles.push(titleStr);
+			modal.setItemProgress(i + 1, items.length, `[已存在跳过] ${titleStr}`);
 			await modal.flush();
-			new Notice("没有满足条件的笔记需要同步。", 10000);
-			return;
+			continue;
 		}
 
-		modal.startItemPhase(items.length);
+		modal.setItemProgress(i + 1, items.length, `${existingFile ? "[更新]" : "[创建]"} ${titleStr}`);
 		await modal.flush();
 
-		// 2. 识别本地已有笔记（基于 get_note_id）
-		// 无论 mode 是增量还是全量，我们都先建好这个索引，方便精准覆盖
-		const localFileMap = collectLocalGetNoteMap(plugin.app);
-
-		// 整批笔记的 id→文件名（纯标题），供路径命名与正文内 biji 链接改写为 Obsidian 双链
-		const idToBasename = buildIdToUniqueBasename(items);
-
-		let imported = 0;
-		let skipped = 0;
-		const writtenTitles: string[] = [];
-		const skippedTitles: string[] = [];
-		for (let i = 0; i < items.length; i++) {
-			if (modal.cancelled) {
-				modal.setDone(`已取消。已写入 ${imported} 条，已跳过 ${skipped} 条。`);
-				await modal.flush();
-				new Notice(`已取消同步，已写入 ${imported} 条。`);
-				return;
-			}
-
-			const item = items[i]!;
-			const noteIdStr = resolveListNoteIdString(item);
-			if (noteIdStr === undefined) {
-				console.warn("[getbiji] 列表项缺少可解析的 id 字段，已跳过", item);
-				continue;
-			}
-
-			const titleStr = item.title?.trim() || "未命名";
-			const existingFile = localFileMap.get(noteIdStr);
-
-			// 增量策略：
-			// 如果本地已存在该 ID 的文件，且用户并没有要求“覆盖更新”，则跳过。
-			if (mode === "incremental" && !forceUpdate && existingFile) {
-				skipped += 1;
-				skippedTitles.push(titleStr);
-				modal.setItemProgress(i + 1, items.length, `[已存在跳过] ${titleStr}`);
-				await modal.flush();
-				continue;
-			}
-
-			modal.setItemProgress(i + 1, items.length, `${existingFile ? "[更新]" : "[创建]"} ${titleStr}`);
-			await modal.flush();
-
+		try {
 			const detail = await fetchDetailOrFallback(client, noteIdStr, item);
 			const basename = idToBasename.get(noteIdStr) ?? sanitizeFileName(item.title || "未命名");
-			
-			const markdown = noteDetailToMarkdown(detail, {
-				idToBasename,
-				folder,
-				canonicalIdStr: noteIdStr,
-			});
+			const markdown = noteDetailToMarkdown(detail, { idToBasename, folder, canonicalIdStr: noteIdStr });
 
 			if (existingFile) {
-				// 1. 更新内容
 				await plugin.app.vault.modify(existingFile, markdown);
-				
-				// 2. 检查是否需要重命名（如果标题改了）
 				const newName = `${basename}.md`;
-				
 				if (existingFile.name !== newName) {
 					const newPath = normalizePath(`${existingFile.parent?.path}/${newName}`);
-					// 只有当目标路径不存在时才重命名，避免冲突
 					if (!plugin.app.vault.getAbstractFileByPath(newPath)) {
 						await plugin.app.vault.rename(existingFile, newPath);
 					}
 				}
 			} else {
-				// 新建：放入同步目录
 				const path = notePathFromBasename(folder, basename);
 				await plugin.app.vault.create(path, markdown);
 			}
 
-			imported += 1;
+			imported++;
 			writtenTitles.push(titleStr);
-
-			if (gapMs > 0) {
-				await sleep(gapMs);
-			}
+		} catch (e) {
+			console.error(`[getbiji] 同步笔记 ${titleStr} 失败:`, e);
 		}
 
-		try {
-			const nowStr = new Date().toLocaleString();
-			const reportLines = [
-				`# GetBiji 同步报告`,
-				`时间：${nowStr}`,
-				`模式：${mode === "incremental" ? "增量同步" : "全量覆盖"}`,
-				`参数：${afterDate ? new Date(afterDate).toLocaleDateString() + " 之后" : "不限时间"}, ${forceUpdate ? "强制覆盖已开启" : "跳过本地已有"}`,
-				``,
-				`## 本次更新写入 (${imported} 条)`,
-				...(writtenTitles.length > 0 ? writtenTitles.map((t) => `- ${t}`) : ["无"]),
-				``,
-				`## 本次跳过 (${skipped} 条)`,
-				...(skippedTitles.length > 0 ? skippedTitles.map((t) => `- ${t}`) : ["无"]),
-				``,
-			];
-			const reportPath = "GetBiji 同步报告.md";
-			const reportFile = plugin.app.vault.getAbstractFileByPath(reportPath);
-			if (reportFile instanceof TFile) {
-				await plugin.app.vault.modify(reportFile, reportLines.join("\n"));
-			} else {
-				await plugin.app.vault.create(reportPath, reportLines.join("\n"));
-			}
-		} catch (reportErr) {
-			console.error("[getbiji] 写入同步报告失败", reportErr);
-		}
-
-		const doneDetail =
-			skipped > 0 ? `完成：已写入或更新 ${imported} 条，已跳过 ${skipped} 条。` : `完成：已写入或更新 ${imported} 条。`;
-		modal.setDone(doneDetail);
-		await modal.flush();
-		await sleep(600);
-		const noticeMsg =
-			skipped > 0
-				? `同步完成：已写入或更新 ${imported} 条，已跳过 ${skipped} 条。`
-				: `同步完成：已写入或更新 ${imported} 条笔记。`;
-		new Notice(noticeMsg);
-	} catch (e: unknown) {
-		const msg = e instanceof Error ? e.message : String(e);
-		console.error("[getbiji]", e);
-		modal.setDone(`失败：${msg}`);
-		await modal.flush();
-		new Notice(`同步失败：${msg}`, 8000);
-		throw e;
-	} finally {
-		plugin.activeSync = null;
-		modal.close();
+		if (gapMs > 0) await sleep(gapMs);
 	}
-})();
+
+	// 3. 生成同步报告
+	try {
+		const reportLines = [
+			`# GetBiji 同步报告`,
+			`时间：${new Date().toLocaleString()}`,
+			`存放：${folder}`,
+			`模式：${mode === "incremental" ? "增量" : "全量"}`,
+			`成功的：${imported} 条`,
+			`挑过的：${skipped} 条`,
+			"",
+			"## 详情",
+			...writtenTitles.map(t => `- [x] ${t}`),
+			...skippedTitles.map(t => `- [ ] ${t} (已存在)`),
+		];
+		const reportPath = normalizePath(`${folder}/同步报告-${Date.now()}.md`);
+		await plugin.app.vault.create(reportPath, reportLines.join("\n"));
+	} catch (e) {
+		console.error("生成报告失败", e);
+	}
+
+	modal.setDone(`同步完成！写入 ${imported} 条，跳过 ${skipped} 条。`);
+	await modal.flush();
+	new Notice(`同步完成：写入 ${imported} 条。`);
+}
+
+/**
+ * 全集同步入口
+ */
+export async function runSync(plugin: GetNotesPluginLike, options: SyncOptions): Promise<void> {
+	const { clientId, apiKey, folderPath, authUseRawKey, requestGapMs } = plugin.settings;
+	if (!clientId.trim() || !apiKey.trim()) {
+		new Notice("请先配置 Client ID 和 API Key。");
+		return;
+	}
+
+	const folder = folderPath.trim() || "GetBiji";
+	await ensureFolder(plugin.app.vault, folder);
+	const client = new GetNoteApiClient(apiKey.trim(), clientId.trim(), authUseRawKey);
+	const modal = new SyncProgressModal(plugin.app, plugin.statusBarItem);
+	
+	plugin.activeSync = { modal, promise: (async () => {})() };
+	modal.open();
+
+	const syncPromise = (async () => {
+		try {
+			const collected = await collectAllListPages(client, 0, 600, () => modal.cancelled, (idx, last, tot) => {
+				modal.setListFetching(idx, last, tot);
+			});
+			if (collected.cancelled) return;
+			await performSyncPipeline(plugin, client, modal, collected.items, options, folder, requestGapMs);
+		} catch (e) {
+			new Notice("同步出错: " + (e instanceof Error ? e.message : String(e)));
+		} finally {
+			plugin.activeSync = null;
+			modal.close();
+		}
+	})();
+
+	plugin.activeSync.promise = syncPromise;
+	await syncPromise;
+}
+
+/**
+ * 知识库同步入口
+ */
+export async function runKnowledgeBaseSync(plugin: GetNotesPluginLike, options: KnowledgeBaseSyncOptions): Promise<void> {
+	const { clientId, apiKey, folderPath, authUseRawKey, requestGapMs } = plugin.settings;
+	if (!clientId.trim() || !apiKey.trim()) {
+		new Notice("请先配置同步信息。");
+		return;
+	}
+
+	// 知识库存放在子目录：GetBiji/知识库名称
+	const baseFolder = folderPath.trim() || "GetBiji";
+	const targetFolder = normalizePath(`${baseFolder}/${sanitizeFileName(options.topicName)}`);
+	await ensureFolder(plugin.app.vault, targetFolder);
+
+	const client = new GetNoteApiClient(apiKey.trim(), clientId.trim(), authUseRawKey);
+	const modal = new SyncProgressModal(plugin.app, plugin.statusBarItem);
+	
+	plugin.activeSync = { modal, promise: (async () => {})() };
+	modal.open();
+
+	const syncPromise = (async () => {
+		try {
+			const collected = await collectAllKnowledgeNotes(client, options.topicId, 600, () => modal.cancelled, (idx, last, tot) => {
+				modal.setListFetching(idx, last, tot);
+			});
+			if (collected.cancelled) return;
+			await performSyncPipeline(plugin, client, modal, collected.items, options, targetFolder, requestGapMs);
+		} catch (e) {
+			new Notice("知识库同步出错: " + (e instanceof Error ? e.message : String(e)));
+		} finally {
+			plugin.activeSync = null;
+			modal.close();
+		}
+	})();
 
 	plugin.activeSync.promise = syncPromise;
 	await syncPromise;

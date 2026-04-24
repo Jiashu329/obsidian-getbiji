@@ -1,4 +1,5 @@
-import { App, Modal, Setting } from "obsidian";
+import { App, Modal, Notice, Setting } from "obsidian";
+import { GetNoteApiClient, KnowledgeBaseItem } from "./get-api";
 
 /** 让出主线程一帧，便于刷新进度条与文案 */
 function yieldToUI(): Promise<void> {
@@ -12,6 +13,12 @@ export interface SyncOptions {
 	afterDate?: number; // 毫秒时间戳，仅同步此之后更新的笔记
 	forceUpdate?: boolean; // 是否覆盖本地已有笔记
 	mode: "incremental" | "full";
+}
+
+/** 知识库同步选项 */
+export interface KnowledgeBaseSyncOptions extends SyncOptions {
+	topicId: string;
+	topicName: string;
 }
 
 /**
@@ -34,38 +41,50 @@ export class SyncStartModal extends Modal {
 	onOpen(): void {
 		const { contentEl } = this;
 		contentEl.empty();
+		this.modalEl.addClass("getbiji-sync-modal-minwidth");
 		contentEl.addClass("getbiji-sync-start-modal");
 
+		// 1. 标题与副标题
 		contentEl.createEl("h2", { text: (this.options.mode === "full" ? "全量" : "增量") + "同步配置" });
+		contentEl.createDiv({
+			cls: "getbiji-sync-modal-subtitle",
+			text: "设置同步的时间范围与覆盖策略，优化笔记处理效率。",
+		});
 
-		// 1. 日期选择
+		// 2. 日期选择区域
 		const dateContainer = contentEl.createDiv({ cls: "getbiji-date-container" });
-		new Setting(dateContainer)
+		const dateSetting = new Setting(dateContainer)
 			.setName("同步起始时间")
-			.setDesc("仅同步在此时间之后有更新的笔记（留空表示同步全部）")
+			.setDesc("仅处理在此日期之后更新的笔记（留空默认为全部）")
 			.addText((text) => {
 				text.inputEl.type = "date";
 				text.onChange((value) => {
 					this.options.afterDate = value ? new Date(value).getTime() : undefined;
+					// 清除快捷按钮的激活状态
+					pillGroup.querySelectorAll(".getbiji-pill-btn").forEach((b) => b.removeClass("is-active"));
 				});
 			});
 
-		// 2. 快捷按钮
-		const quickButtons = contentEl.createDiv({ cls: "getbiji-quick-buttons" });
-		const addQuickBtn = (label: string, days: number | null) => {
-			const btn = quickButtons.createEl("button", { text: label, cls: "mod-subtle getbiji-quick-btn" });
+		// 3. 快捷胶囊按钮组
+		const pillGroup = dateContainer.createDiv({ cls: "getbiji-pill-group" });
+		const addPill = (label: string, days: number | null) => {
+			const btn = pillGroup.createEl("button", { text: label, cls: "getbiji-pill-btn" });
+			if (days === null && !this.options.afterDate) btn.addClass("is-active");
+
 			btn.addEventListener("click", () => {
+				// UI 反馈
+				pillGroup.querySelectorAll(".getbiji-pill-btn").forEach((b) => b.removeClass("is-active"));
+				btn.addClass("is-active");
+
+				const input = dateSetting.controlEl.querySelector("input[type='date']") as HTMLInputElement;
+
 				if (days === null) {
-					// 这里的逻辑：如果是 null，我们就清空日期选择器及 options
 					this.options.afterDate = undefined;
-					const input = dateContainer.querySelector("input[type='date']") as HTMLInputElement;
 					if (input) input.value = "";
 				} else {
 					const date = new Date();
 					date.setDate(date.getDate() - days);
-					// 格式化为 YYYY-MM-DD 以同步到 input 框
 					const dateStr = date.toISOString().split("T")[0] || "";
-					const input = dateContainer.querySelector("input[type='date']") as HTMLInputElement;
 					if (input && dateStr) {
 						input.value = dateStr;
 						this.options.afterDate = new Date(dateStr).getTime();
@@ -74,22 +93,23 @@ export class SyncStartModal extends Modal {
 			});
 		};
 
-		addQuickBtn("最近3天", 3);
-		addQuickBtn("最近1周", 7);
-		addQuickBtn("最近1月", 30);
-		addQuickBtn("全部", null);
+		addPill("最近3天", 3);
+		addPill("最近1周", 7);
+		addPill("最近1月", 30);
+		addPill("全部内容", null);
 
-		// 3. 策略选择
-		new Setting(contentEl)
-			.setName("覆盖更新")
-			.setDesc("开启后，即使本地已存在该笔记，若满足时间筛选也会重新拉取并覆盖")
+		// 4. 策略选择（增加红色警示）
+		const strategySetting = new Setting(contentEl)
+			.setName("覆盖本地更新")
+			.setDesc("开启后将对本地已有的笔记内容进行覆盖更新，请注意内容安全！")
 			.addToggle((toggle) => {
 				toggle.setValue(this.options.forceUpdate || false).onChange((value) => {
 					this.options.forceUpdate = value;
 				});
 			});
+		strategySetting.descEl.addClass("getbiji-warning-text");
 
-		// 4. 操作按钮
+		// 5. 操作按钮
 		const footer = contentEl.createDiv({ cls: "modal-button-container" });
 		const confirmBtn = footer.createEl("button", {
 			text: "开始同步",
@@ -216,5 +236,203 @@ export class SyncProgressModal extends Modal {
 
 	flush(): Promise<void> {
 		return yieldToUI();
+	}
+}
+
+/**
+ * 知识库选择与同步配置弹窗 (分步)
+ */
+export class KnowledgeBaseSelectModal extends Modal {
+	private client: GetNoteApiClient;
+	private onConfirm: (options: KnowledgeBaseSyncOptions) => void;
+	private kbList: KnowledgeBaseItem[] = [];
+	private selectedKb: KnowledgeBaseItem | null = null;
+	private step: "select" | "config" = "select";
+	private isLoading = false;
+
+	private syncOptions: SyncOptions = {
+		mode: "incremental",
+		forceUpdate: false,
+		afterDate: undefined,
+	};
+
+	constructor(
+		app: App,
+		client: GetNoteApiClient,
+		onConfirm: (options: KnowledgeBaseSyncOptions) => void,
+	) {
+		super(app);
+		this.client = client;
+		this.onConfirm = onConfirm;
+	}
+
+	async onOpen() {
+		this.modalEl.addClass("getbiji-sync-modal-minwidth");
+		await this.loadKbList();
+		this.render();
+	}
+
+	async loadKbList() {
+		this.isLoading = true;
+		this.render();
+		try {
+			// 目前拉取第一页即可，通常知识库数量不会太多
+			const res = await this.client.listKnowledgeBases(1);
+			this.kbList = res.topics;
+		} catch (e) {
+			new Notice("获取知识库列表失败: " + (e instanceof Error ? e.message : String(e)));
+		} finally {
+			this.isLoading = false;
+			this.render();
+		}
+	}
+
+	render() {
+		const { contentEl } = this;
+		contentEl.empty();
+
+		if (this.step === "select") {
+			this.renderSelectStep(contentEl);
+		} else {
+			this.renderConfigStep(contentEl);
+		}
+	}
+
+	private renderSelectStep(el: HTMLElement) {
+		el.createEl("h2", { text: "选择同步的知识库" });
+		el.createDiv({
+			cls: "getbiji-sync-modal-subtitle",
+			text: "请选择一个您想要同步到 Obsidian 的 Getbiji 知识库。",
+		});
+
+		if (this.isLoading) {
+			const loading = el.createDiv({ cls: "getbiji-loading-container" });
+			loading.createDiv({ cls: "getbiji-loading-icon" });
+			loading.createSpan({ text: "正在获取知识库列表..." });
+			return;
+		}
+
+		if (this.kbList.length === 0) {
+			el.createEl("p", { text: "未找到任何知识库。", cls: "setting-item-description" });
+			return;
+		}
+
+		const listContainer = el.createDiv({ cls: "getbiji-kb-list" });
+		this.kbList.forEach((kb) => {
+			const item = listContainer.createDiv({
+				cls: "getbiji-kb-item" + (this.selectedKb?.topic_id === kb.topic_id ? " is-selected" : ""),
+			});
+
+			item.createDiv({ cls: "getbiji-kb-name", text: kb.name });
+			if (kb.description) {
+				item.createDiv({ cls: "getbiji-kb-desc", text: kb.description });
+			}
+
+			const stats = item.createDiv({ cls: "getbiji-kb-stats" });
+			this.addStat(stats, "📝", `${kb.stats.note_count} 笔记`);
+			this.addStat(stats, "📁", `${kb.stats.file_count} 文件`);
+			this.addStat(stats, "👤", `${kb.stats.blogger_count} 博主`);
+			this.addStat(stats, "📺", `${kb.stats.live_count} 直播`);
+
+			item.addEventListener("click", () => {
+				this.selectedKb = kb;
+				this.step = "config";
+				this.render();
+			});
+		});
+	}
+
+	private addStat(parent: HTMLElement, icon: string, text: string) {
+		const span = parent.createSpan({ cls: "getbiji-kb-stat-item" });
+		span.createSpan({ text: icon });
+		span.createSpan({ text: text });
+	}
+
+	private renderConfigStep(el: HTMLElement) {
+		if (!this.selectedKb) return;
+
+		el.createEl("h2", { text: `同步配置：${this.selectedKb.name}` });
+		
+		const backBtn = el.createEl("button", { text: "← 返回选择", cls: "getbiji-back-btn" });
+		backBtn.style.marginBottom = "12px";
+		backBtn.addEventListener("click", () => {
+			this.step = "select";
+			this.render();
+		});
+
+		// 复用类似 SyncStartModal 的配置 UI
+		const dateContainer = el.createDiv({ cls: "getbiji-date-container" });
+		const dateSetting = new Setting(dateContainer)
+			.setName("同步起始时间")
+			.setDesc("仅分析在此之后更新的笔记")
+			.addText((text) => {
+				text.inputEl.type = "date";
+				text.onChange((value) => {
+					this.syncOptions.afterDate = value ? new Date(value).getTime() : undefined;
+					pillGroup.querySelectorAll(".getbiji-pill-btn").forEach((b) => b.removeClass("is-active"));
+				});
+			});
+
+		const pillGroup = dateContainer.createDiv({ cls: "getbiji-pill-group" });
+		const addPill = (label: string, days: number | null) => {
+			const btn = pillGroup.createEl("button", { text: label, cls: "getbiji-pill-btn" });
+			if (days === null) btn.addClass("is-active");
+
+			btn.addEventListener("click", () => {
+				pillGroup.querySelectorAll(".getbiji-pill-btn").forEach((b) => b.removeClass("is-active"));
+				btn.addClass("is-active");
+				const input = dateSetting.controlEl.querySelector("input[type='date']") as HTMLInputElement;
+				if (days === null) {
+					this.syncOptions.afterDate = undefined;
+					if (input) input.value = "";
+				} else {
+					const date = new Date();
+					date.setDate(date.getDate() - days);
+					const dateStr = date.toISOString().split("T")[0];
+					if (input && dateStr) {
+						input.value = dateStr;
+						this.syncOptions.afterDate = new Date(dateStr).getTime();
+					}
+				}
+			});
+		};
+		addPill("最近3天", 3);
+		addPill("最近1周", 7);
+		addPill("最近1月", 30);
+		addPill("全部内容", null);
+
+		new Setting(el)
+			.setName("同步方式")
+			.setDesc("全量同步将覆盖本地已修改的内容")
+			.addDropdown((dp) => {
+				dp.addOption("incremental", "增量同步")
+					.addOption("full", "全量同步")
+					.setValue(this.syncOptions.mode)
+					.onChange((val: "incremental" | "full") => {
+						this.syncOptions.mode = val;
+					});
+			});
+
+		new Setting(el)
+			.setName("覆盖本地更新")
+			.setDesc("开启后将对本地已有笔记进行覆盖")
+			.addToggle((tg) => {
+				tg.setValue(this.syncOptions.forceUpdate || false).onChange((v) => {
+					this.syncOptions.forceUpdate = v;
+				});
+			});
+
+		const footer = el.createDiv({ cls: "modal-button-container" });
+		const confirmBtn = footer.createEl("button", { text: "开始同步", cls: "mod-cta" });
+		confirmBtn.addEventListener("click", () => {
+			this.close();
+			this.onConfirm({
+				...this.syncOptions,
+				topicId: this.selectedKb!.topic_id,
+				topicName: this.selectedKb!.name,
+			});
+		});
+
+		footer.createEl("button", { text: "取消" }).addEventListener("click", () => this.close());
 	}
 }

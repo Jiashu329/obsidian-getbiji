@@ -1,7 +1,8 @@
 import { Plugin } from "obsidian";
 import { DEFAULT_SETTINGS, GetNotesSettingTab, type GetNotesSettings } from "./settings";
-import { runSync } from "./sync";
-import { SyncStartModal } from "./sync-ui";
+import { runSync, runKnowledgeBaseSync } from "./sync";
+import { SyncStartModal, KnowledgeBaseSelectModal } from "./sync-ui";
+import { GetNoteApiClient } from "./get-api";
 import type { SyncModalLike } from "./context";
 
 /**
@@ -38,11 +39,40 @@ export default class GetNotesPlugin extends Plugin {
 			},
 		});
 
+		this.addCommand({
+			id: "pull-knowledge-base",
+			name: "同步指定知识库",
+			callback: () => {
+				void this.syncKnowledgeBase();
+			},
+		});
+
 		this.addSettingTab(new GetNotesSettingTab(this.app, this));
 	}
 
-	/** 从侧边栏按钮或命令触发同步，并捕获未处理异常 */
-	private async syncFromRibbon(mode: "incremental" | "full"): Promise<void> {
+	private syncKnowledgeBase(): void {
+		if (this.activeSync) {
+			this.activeSync.modal.isBackground = false;
+			this.activeSync.modal.open();
+			return;
+		}
+
+		const { clientId, apiKey, authUseRawKey } = this.settings;
+		const client = new GetNoteApiClient(apiKey, clientId, authUseRawKey);
+
+		new KnowledgeBaseSelectModal(this.app, client, (options) => {
+			void (async () => {
+				try {
+					await runKnowledgeBaseSync(this, options);
+				} catch {
+					// 内部已 Notice
+				}
+			})();
+		}).open();
+	}
+
+	/** 从侧边栏按钮或命令触发同步 */
+	private syncFromRibbon(mode: "incremental" | "full"): void {
 		if (this.activeSync) {
 			this.activeSync.modal.isBackground = false;
 			this.activeSync.modal.open();

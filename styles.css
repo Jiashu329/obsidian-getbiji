@@ -43,12 +43,145 @@
 	margin-bottom: 1em;
 }
 
-/* 同步弹窗样式 */
-.getbiji-quick-btn {
-	margin-right: 8px;
-	margin-bottom: 8px;
+/* 同步弹窗样式（高级重构） */
+.getbiji-sync-modal-minwidth {
+	min-width: 440px;
 }
 
-.getbiji-sync-modal-minwidth {
-	min-width: 400px;
+.getbiji-sync-start-modal h2 {
+	margin-top: 0;
+	margin-bottom: 4px;
+	font-weight: 600;
+	font-size: 1.4em;
+}
+
+.getbiji-sync-modal-subtitle {
+	margin-bottom: 24px;
+	color: var(--text-muted);
+	font-size: 0.9em;
+}
+
+/* 胶囊选项组 */
+.getbiji-pill-group {
+	display: flex;
+	background: var(--background-secondary-alt);
+	padding: 4px;
+	border-radius: 8px;
+	gap: 2px;
+	margin-top: 12px;
+}
+
+.getbiji-pill-btn {
+	flex: 1;
+	border: none;
+	background: transparent;
+	color: var(--text-muted);
+	box-shadow: none;
+	border-radius: 6px;
+	font-size: 13px;
+	transition: all 0.2s ease;
+	cursor: pointer;
+	padding: 4px 8px;
+}
+
+.getbiji-pill-btn:hover {
+	color: var(--text-normal);
+	background: var(--background-modifier-hover);
+}
+
+.getbiji-pill-btn.is-active {
+	background: var(--interactive-accent);
+	color: white;
+	font-weight: 500;
+}
+
+.getbiji-pill-btn.is-active:hover {
+	background: var(--interactive-accent-hover);
+}
+
+/* 紧凑的时间设置项 */
+.getbiji-date-container {
+	margin-bottom: 20px;
+}
+
+.getbiji-date-container input[type='date'] {
+	background: var(--background-secondary-alt);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+}
+
+.getbiji-warning-text {
+	color: var(--text-error) !important;
+}
+
+/* 知识库列表样式 */
+.getbiji-kb-list {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	margin-top: 16px;
+	max-height: 400px;
+	overflow-y: auto;
+	padding-right: 4px;
+}
+
+.getbiji-kb-item {
+	display: flex;
+	flex-direction: column;
+	padding: 12px;
+	border-radius: 8px;
+	border: 1px solid var(--background-modifier-border);
+	background: var(--background-primary);
+	cursor: pointer;
+	transition: all 0.2s ease;
+}
+
+.getbiji-kb-item:hover {
+	border-color: var(--interactive-accent);
+	background: var(--background-modifier-hover);
+}
+
+.getbiji-kb-item.is-selected {
+	border-color: var(--interactive-accent);
+	background: var(--background-modifier-hover);
+	box-shadow: 0 0 0 1px var(--interactive-accent);
+}
+
+.getbiji-kb-name {
+	font-weight: 600;
+	font-size: 1.1em;
+	margin-bottom: 4px;
+}
+
+.getbiji-kb-desc {
+	font-size: 0.85em;
+	color: var(--text-muted);
+	margin-bottom: 8px;
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+}
+
+.getbiji-kb-stats {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px;
+	font-size: 0.8em;
+	color: var(--text-accent);
+}
+
+.getbiji-kb-stat-item {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.getbiji-loading-container {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	padding: 40px 0;
+	color: var(--text-muted);
 }

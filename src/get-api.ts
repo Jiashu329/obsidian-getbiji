@@ -180,9 +180,11 @@ export class GetNoteApiClient {
 		throw new Error("请求多次仍返回 429，请稍后再试或降低同步频率。");
 	}
 
-	/** 分页列举笔记，`since_id` 为游标（首次可用 0 或 "0"，大 ID 务必用字符串） */
+	/** 分页列举笔记，`since_id` 为游标 */
 	async listNotes(sinceId: number | string): Promise<ListNotesData> {
-		return this.getJson<ListNotesData>("/resource/note/list", { since_id: sinceId });
+		return this.getJson<ListNotesData>("/resource/note/list", {
+			since_id: sinceId,
+		});
 	}
 
 	/** 拉取单条笔记详情（正文更完整）；参数用字符串避免大数精度问题 */
@@ -192,4 +194,46 @@ export class GetNoteApiClient {
 		});
 		return data.note;
 	}
+
+	/** 获取知识库列表 (分页) */
+	async listKnowledgeBases(page: number): Promise<ListKnowledgeBasesData> {
+		return this.getJson<ListKnowledgeBasesData>("/resource/knowledge/list", {
+			page,
+		});
+	}
+
+	/** 获取特定知识库下的笔记列表 (分页) */
+	async listKnowledgeNotes(topicId: string, page: number): Promise<ListKnowledgeNotesData> {
+		return this.getJson<ListKnowledgeNotesData>("/resource/knowledge/notes", {
+			topic_id: topicId,
+			page,
+		});
+	}
+}
+
+export interface KnowledgeBaseStats {
+	note_count: number;
+	file_count: number;
+	blogger_count: number;
+	live_count: number;
+}
+
+export interface KnowledgeBaseItem {
+	topic_id: string;
+	name: string;
+	description: string;
+	stats: KnowledgeBaseStats;
+	created_at: string;
+}
+
+export interface ListKnowledgeBasesData {
+	topics: KnowledgeBaseItem[];
+	has_more: boolean;
+	total: number;
+}
+
+export interface ListKnowledgeNotesData {
+	notes: NoteListItem[];
+	has_more: boolean;
+	total: number;
 }
