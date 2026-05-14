@@ -13,6 +13,29 @@
 
 <h1 align="center">Getbiji for Obsidian</h1>
 
+*Read this in other languages: [English](#english), [简体中文](#简体中文)*
+
+## English
+
+> **Seamlessly sync your fragmented reading into your Obsidian vault.**
+
+[Getbiji](https://www.biji.com) sync plugin uses the official Getbiji API to seamlessly and efficiently sync the notes you've clipped on the Get mobile app, web version, and various browser extensions to your local Obsidian vault.
+
+### Installation
+
+1. Search for `GetBiji` in Obsidian's **Community plugins** and install it.
+2. Enable the plugin.
+
+### Usage
+
+1. Visit the [Getbiji Open Platform](https://openapi.biji.com) to get your `Client ID` and `API Key`.
+2. Open Obsidian **Settings → GetBiji** and enter your API credentials.
+3. Click the cloud icon on the left ribbon or use the Command Palette (`Cmd/Ctrl + P`) and search for `Getbiji` to trigger sync commands (e.g., Sync My Notes, Sync Knowledge Base).
+
+---
+
+## 简体中文
+
 > **让碎片化阅读优雅地沉淀到你的 Obsidian 笔记仓库中。**
 
 [Getbiji](https://www.biji.com) 同步插件，使用Getbiji官方API接口，专注于将你在 Get 移动端、网页版及各类浏览器插件中剪裁的笔记，无缝、高效地同步至本地 Obsidian 库。

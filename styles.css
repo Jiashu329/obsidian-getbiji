@@ -110,8 +110,8 @@
 	border-radius: 6px;
 }
 
-.getbiji-warning-text {
-	color: var(--text-error) !important;
+.setting-item-description.getbiji-warning-text {
+	color: var(--text-error);
 }
 
 /* 知识库列表样式 */
