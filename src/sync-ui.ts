@@ -503,7 +503,7 @@ export class BloggerSelectModal extends Modal {
 				let hasMore = true;
 				while (hasMore) {
 					// 增加延迟，避免 429 频率过快
-					await new Promise(r => setTimeout(r, 500));
+					await new Promise(r => window.setTimeout(r, 500));
 					const bloggerRes = await this.client.listBloggers(topic.topic_id, page);
 					const bloggers = bloggerRes.bloggers || [];
 					for (const b of bloggers) {

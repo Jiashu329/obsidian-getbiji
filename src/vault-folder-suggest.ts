@@ -75,8 +75,8 @@ export class VaultFolderPathSuggest extends AbstractInputSuggest<string> {
 	 */
 	selectSuggestion(path: string, evt: MouseEvent | KeyboardEvent): void {
 		this.close();
-		// 使用 globalThis 避免 activeWindow 在类型检查/ESLint 上与 Window 不一致
-		globalThis.setTimeout(() => {
+		// 使用 window 代替 globalThis，以适配 Obsidian 多窗口 (Popout) 兼容性
+		window.setTimeout(() => {
 			this.setValue(path);
 			this.onChoose(path);
 		}, 0);
