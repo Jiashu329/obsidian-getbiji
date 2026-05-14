@@ -1,0 +1,51 @@
+name: Release Obsidian Plugin
+
+on:
+  push:
+    tags:
+      - "*" # 只要推送 Tag 就会触发自动构建和发布
+
+permissions:
+  contents: write
+  id-token: write      # 必须的权限：用于生成加密的 artifact attestations
+  attestations: write  # 必须的权限：用于写入 attestations
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build plugin
+        run: npm run build
+
+      # 生成 GitHub Artifact Attestations（构建来源证明）
+      - name: Generate Artifact Attestations
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: |
+            main.js
+            manifest.json
+            styles.css
+
+      # 自动将打包产物作为附件上传到对应的 GitHub Release 中
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            main.js
+            manifest.json
+            styles.css
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
