@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-getbiji",
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"description": "将 Get 笔记（biji.com）通过 Open API 同步到 Obsidian",
 	"main": "main.js",
 	"type": "module",
